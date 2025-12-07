@@ -121,14 +121,21 @@ The Simple Chores card is **automatically loaded** when you install the integrat
 
 1. **Install the integration** (via HACS or manually)
 2. **Restart Home Assistant** 
-3. **Add the card** directly to any dashboard:
+3. **Add the card** using either method:
+
+   **Method A: Visual Picker** 🎨
+   - Edit any dashboard → Add Card
+   - Search for "**Simple Chores Card**" in the picker
+   - Click to add automatically!
+
+   **Method B: Manual YAML** ⌨️
    ```yaml
    type: custom:simple-chores-card
    show_completed: false
    default_room: all
    ```
 
-**That's it!** The card resources are automatically registered by the integration.
+**That's it!** The card appears in the visual card picker just like built-in cards.
 
 ### 🔧 Manual Installation (Fallback)
 

@@ -25,6 +25,7 @@ class SimpleChoresCard extends LitElement {
 
   static getStubConfig() {
     return {
+      type: "custom:simple-chores-card",
       show_completed: false,
       default_room: "all"
     };
@@ -407,16 +408,169 @@ class SimpleChoresCard extends LitElement {
   }
 }
 
-customElements.define("simple-chores-card", SimpleChoresCard);
+// Card Editor for visual picker
+class SimpleChoresCardEditor extends LitElement {
+  setConfig(config) {
+    this._config = config;
+  }
 
-// Register with HACS/custom cards
-window.customCards = window.customCards || [];
-window.customCards.push({
-  type: "simple-chores-card",
-  name: "Simple Chores Card",
-  description: "A beautiful card for managing simple chores",
-  preview: true,
-});
+  static get properties() {
+    return {
+      hass: { type: Object },
+      _config: { type: Object },
+    };
+  }
+
+  get _show_completed() {
+    return this._config?.show_completed || false;
+  }
+
+  get _default_room() {
+    return this._config?.default_room || "all";
+  }
+
+  render() {
+    if (!this.hass) {
+      return html``;
+    }
+
+    return html`
+      <div class="card-config">
+        <div class="option">
+          <ha-formfield label="Show completed chores">
+            <ha-checkbox
+              .checked=${this._show_completed}
+              .configValue=${"show_completed"}
+              @change=${this._valueChanged}
+            ></ha-checkbox>
+          </ha-formfield>
+        </div>
+        <div class="option">
+          <paper-dropdown-menu
+            label="Default room filter"
+            .configValue=${"default_room"}
+            @value-changed=${this._valueChanged}
+          >
+            <paper-listbox
+              slot="dropdown-content"
+              .selected=${["all"].indexOf(this._default_room)}
+            >
+              <paper-item>All Rooms</paper-item>
+            </paper-listbox>
+          </paper-dropdown-menu>
+        </div>
+        <div class="info">
+          <p>
+            <strong>Simple Chores Card</strong><br>
+            A beautiful card for managing your household chores with room filtering,
+            completion tracking, and modern design.
+          </p>
+        </div>
+      </div>
+    `;
+  }
+
+  _valueChanged(ev) {
+    if (!this._config || !this.hass) {
+      return;
+    }
+    const target = ev.target;
+    const configValue = target.configValue;
+    
+    if (this[`_${configValue}`] === target.value) {
+      return;
+    }
+    
+    if (target.configValue) {
+      if (target.value === "" || target.value == null) {
+        this._config = { ...this._config };
+        delete this._config[target.configValue];
+      } else {
+        this._config = {
+          ...this._config,
+          [target.configValue]: target.checked !== undefined ? target.checked : target.value,
+        };
+      }
+    }
+    
+    const event = new CustomEvent("config-changed", {
+      detail: { config: this._config },
+      bubbles: true,
+      composed: true,
+    });
+    this.dispatchEvent(event);
+  }
+
+  static get styles() {
+    return css`
+      .card-config {
+        padding: 16px;
+      }
+      .option {
+        margin-bottom: 16px;
+      }
+      .info {
+        margin-top: 24px;
+        padding: 16px;
+        background: var(--secondary-background-color);
+        border-radius: 8px;
+        border-left: 4px solid var(--primary-color);
+      }
+      .info p {
+        margin: 0;
+        color: var(--primary-text-color);
+      }
+      .info strong {
+        color: var(--primary-color);
+      }
+    `;
+  }
+}
+
+customElements.define("simple-chores-card", SimpleChoresCard);
+customElements.define("simple-chores-card-editor", SimpleChoresCardEditor);
+
+// Wait for customCards to be available and register
+(function() {
+  const registerCard = () => {
+    // Register with custom card picker - this makes it show up in the visual picker
+    window.customCards = window.customCards || [];
+    window.customCards.push({
+      type: "simple-chores-card",
+      name: "Simple Chores Card", 
+      description: "Manage household chores with room organization and completion tracking",
+      preview: true, // This enables preview in card picker
+      documentationURL: "https://github.com/darthmario/simple-chores",
+    });
+
+    // Also register in the legacy format for broader compatibility  
+    if (!window.customCardsRegistry) {
+      window.customCardsRegistry = {};
+    }
+    window.customCardsRegistry["simple-chores-card"] = {
+      type: "simple-chores-card",
+      name: "Simple Chores Card",
+      description: "Manage household chores with room organization and completion tracking",
+      preview: true,
+    };
+
+    // Register in HA card registry for visual picker
+    if (window.customElements && window.customElements.whenDefined) {
+      window.customElements.whenDefined('simple-chores-card').then(() => {
+        const event = new Event('ll-rebuild', { bubbles: true, composed: true });
+        document.dispatchEvent(event);
+      });
+    }
+
+    console.info("Simple Chores Card registered for visual picker");
+  };
+
+  // Register immediately and also after DOM is ready
+  registerCard();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', registerCard);
+  }
+})();
 
 console.info(
   `%c SIMPLE-CHORES-CARD %c v1.0.0 `,
