@@ -2,8 +2,8 @@
 
 A Home Assistant custom integration for tracking simple chores with room organization, multiple frequencies, user attribution, and automatic rescheduling.
 
-[![HACS Validation](https://github.com/nathancraddock/simple_chores/actions/workflows/hacs.yaml/badge.svg)](https://github.com/nathancraddock/simple_chores/actions/workflows/hacs.yaml)
-[![Hassfest Validation](https://github.com/nathancraddock/simple_chores/actions/workflows/hassfest.yaml/badge.svg)](https://github.com/nathancraddock/simple_chores/actions/workflows/hassfest.yaml)
+[![HACS Validation](https://github.com/darthmario/simple-chores/actions/workflows/hacs.yaml/badge.svg)](https://github.com/darthmario/simple-chores/actions/workflows/hacs.yaml)
+[![Hassfest Validation](https://github.com/darthmario/simple-chores/actions/workflows/hassfest.yaml/badge.svg)](https://github.com/darthmario/simple-chores/actions/workflows/hassfest.yaml)
 
 ## Features
 
@@ -25,7 +25,7 @@ A Home Assistant custom integration for tracking simple chores with room organiz
 1. Make sure [HACS](https://hacs.xyz/) is installed
 2. Add this repository as a custom repository in HACS:
    - Go to HACS → Integrations → ⋮ (three dots) → Custom repositories
-   - Add URL: `https://github.com/nathancraddock/simple_chores`
+   - Add URL: `https://github.com/darthmario/simple-chores`
    - Category: Integration
 3. Click "Install"
 4. Restart Home Assistant
