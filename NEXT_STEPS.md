@@ -1,10 +1,10 @@
-# Next Steps for Household Tasks
+# Next Steps for Simple Chores
 
 ## 1. Test Locally in Home Assistant
 
 1. Copy the integration to your Home Assistant config:
    ```bash
-   cp -r custom_components/household_tasks /path/to/homeassistant/config/custom_components/
+   cp -r custom_components/simple_chores /path/to/homeassistant/config/custom_components/
    ```
 
 2. Copy the Lovelace card to your www folder:
@@ -16,7 +16,7 @@
 
 4. Add the integration:
    - Go to Settings → Devices & Services → Add Integration
-   - Search for "Household Tasks"
+   - Search for "Simple Chores"
    - Configure notification settings
 
 5. Add the Lovelace card resource:
@@ -34,9 +34,9 @@
 cd /Users/nathancraddock/Documents/chores
 git init
 git add .
-git commit -m "Initial commit: Household Tasks integration"
+git commit -m "Initial commit: Simple Chores integration"
 git branch -M main
-git remote add origin https://github.com/nathancraddock/household_tasks.git
+git remote add origin https://github.com/nathancraddock/simple_chores.git
 git push -u origin main
 ```
 
@@ -53,7 +53,7 @@ git push -u origin main
 
 1. Open HACS in Home Assistant
 2. Go to Integrations → ⋮ (three dots) → Custom repositories
-3. Add your repo URL: `https://github.com/nathancraddock/household_tasks`
+3. Add your repo URL: `https://github.com/nathancraddock/simple_chores`
 4. Category: Integration
 5. Click Add, then install from HACS
 
@@ -71,7 +71,7 @@ To make it discoverable by all HACS users:
 1. Create a 256x256 PNG icon
 2. Create a 512x512 PNG icon (@2x)
 3. Submit PR to https://github.com/home-assistant/brands
-   - Add to `custom_integrations/household_tasks/`
+   - Add to `custom_integrations/simple_chores/`
 
 ---
 
@@ -81,28 +81,28 @@ Test the services in Developer Tools → Services:
 
 ```yaml
 # Add a custom room
-service: household_tasks.add_room
+service: simple_chores.add_room
 data:
   name: "Garage"
   icon: "mdi:garage"
 
 # Add a chore (use an HA Area ID or custom room ID)
-service: household_tasks.add_chore
+service: simple_chores.add_chore
 data:
   name: "Vacuum floors"
   room_id: "area_living_room"
   frequency: "weekly"
 
 # Complete a chore
-service: household_tasks.complete_chore
+service: simple_chores.complete_chore
 data:
   chore_id: "YOUR_CHORE_ID"
 
 # Send notification manually
-service: household_tasks.send_due_notification
+service: simple_chores.send_due_notification
 ```
 
 Check sensor attributes in Developer Tools → States:
-- `sensor.household_tasks_due_today`
-- `sensor.household_tasks_due_this_week`
-- `sensor.household_tasks_total` (has rooms list)
+- `sensor.simple_chores_due_today`
+- `sensor.simple_chores_due_this_week`
+- `sensor.simple_chores_total` (has rooms list)

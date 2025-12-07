@@ -1,11 +1,11 @@
 """Constants for the Household Tasks integration."""
 from typing import Final
 
-DOMAIN: Final = "household_tasks"
+DOMAIN: Final = "simple_chores"
 
 # Storage
 STORAGE_VERSION: Final = 1
-STORAGE_KEY: Final = "household_tasks"
+STORAGE_KEY: Final = "simple_chores"
 
 # Frequencies
 FREQUENCY_DAILY: Final = "daily"

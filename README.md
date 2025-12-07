@@ -1,9 +1,9 @@
-# Household Tasks
+# Simple Chores
 
-A Home Assistant custom integration for tracking household chores with room organization, multiple frequencies, user attribution, and automatic rescheduling.
+A Home Assistant custom integration for tracking simple chores with room organization, multiple frequencies, user attribution, and automatic rescheduling.
 
-[![HACS Validation](https://github.com/nathancraddock/household_tasks/actions/workflows/hacs.yaml/badge.svg)](https://github.com/nathancraddock/household_tasks/actions/workflows/hacs.yaml)
-[![Hassfest Validation](https://github.com/nathancraddock/household_tasks/actions/workflows/hassfest.yaml/badge.svg)](https://github.com/nathancraddock/household_tasks/actions/workflows/hassfest.yaml)
+[![HACS Validation](https://github.com/nathancraddock/simple_chores/actions/workflows/hacs.yaml/badge.svg)](https://github.com/nathancraddock/simple_chores/actions/workflows/hacs.yaml)
+[![Hassfest Validation](https://github.com/nathancraddock/simple_chores/actions/workflows/hassfest.yaml/badge.svg)](https://github.com/nathancraddock/simple_chores/actions/workflows/hassfest.yaml)
 
 ## Features
 
@@ -25,18 +25,18 @@ A Home Assistant custom integration for tracking household chores with room orga
 1. Make sure [HACS](https://hacs.xyz/) is installed
 2. Add this repository as a custom repository in HACS:
    - Go to HACS → Integrations → ⋮ (three dots) → Custom repositories
-   - Add URL: `https://github.com/nathancraddock/household_tasks`
+   - Add URL: `https://github.com/nathancraddock/simple_chores`
    - Category: Integration
 3. Click "Install"
 4. Restart Home Assistant
-5. Go to Settings → Devices & Services → Add Integration → "Household Tasks"
+5. Go to Settings → Devices & Services → Add Integration → "Simple Chores"
 
 ### Manual Installation
 
-1. Download the `custom_components/household_tasks` folder
+1. Download the `custom_components/simple_chores` folder
 2. Copy it to your `config/custom_components/` directory
 3. Restart Home Assistant
-4. Go to Settings → Devices & Services → Add Integration → "Household Tasks"
+4. Go to Settings → Devices & Services → Add Integration → "Simple Chores"
 
 ## Configuration
 
@@ -54,30 +54,30 @@ The integration creates the following entities:
 
 | Entity | Type | Description |
 |--------|------|-------------|
-| `sensor.household_tasks_due_today` | Sensor | Count of chores due today |
-| `sensor.household_tasks_due_this_week` | Sensor | Count of chores due this week |
-| `sensor.household_tasks_overdue` | Sensor | Count of overdue chores |
-| `sensor.household_tasks_total` | Sensor | Total number of chores |
-| `binary_sensor.household_tasks_has_overdue` | Binary Sensor | True if any overdue chores |
-| `calendar.household_tasks` | Calendar | Calendar view of all chores |
+| `sensor.simple_chores_due_today` | Sensor | Count of chores due today |
+| `sensor.simple_chores_due_this_week` | Sensor | Count of chores due this week |
+| `sensor.simple_chores_overdue` | Sensor | Count of overdue chores |
+| `sensor.simple_chores_total` | Sensor | Total number of chores |
+| `binary_sensor.simple_chores_has_overdue` | Binary Sensor | True if any overdue chores |
+| `calendar.simple_chores` | Calendar | Calendar view of all chores |
 
 ## Services
 
-### `household_tasks.add_room`
+### `simple_chores.add_room`
 Create a custom room for organizing chores.
 
 ```yaml
-service: household_tasks.add_room
+service: simple_chores.add_room
 data:
   name: "Garage"
   icon: "mdi:garage"
 ```
 
-### `household_tasks.add_chore`
+### `simple_chores.add_chore`
 Create a new chore.
 
 ```yaml
-service: household_tasks.add_chore
+service: simple_chores.add_chore
 data:
   name: "Clean counters"
   room_id: "area_kitchen"  # Use HA Area ID or custom room ID
@@ -85,30 +85,30 @@ data:
   start_date: "2024-01-15"  # Optional, defaults to today
 ```
 
-### `household_tasks.complete_chore`
+### `simple_chores.complete_chore`
 Mark a chore as completed and schedule the next occurrence.
 
 ```yaml
-service: household_tasks.complete_chore
+service: simple_chores.complete_chore
 data:
   chore_id: "abc123"
   user_id: "user-uuid"  # Optional, defaults to current user
 ```
 
-### `household_tasks.skip_chore`
+### `simple_chores.skip_chore`
 Skip a chore to the next occurrence without marking complete.
 
 ```yaml
-service: household_tasks.skip_chore
+service: simple_chores.skip_chore
 data:
   chore_id: "abc123"
 ```
 
-### `household_tasks.send_due_notification`
+### `simple_chores.send_due_notification`
 Manually trigger a notification with chores due today.
 
 ```yaml
-service: household_tasks.send_due_notification
+service: simple_chores.send_due_notification
 ```
 
 ## Custom Lovelace Card
@@ -173,13 +173,13 @@ automation:
   - alias: "Notify overdue chores"
     trigger:
       - platform: state
-        entity_id: binary_sensor.household_tasks_has_overdue
+        entity_id: binary_sensor.simple_chores_has_overdue
         to: "on"
     action:
       - service: notify.mobile_app_phone
         data:
           title: "Overdue Chores!"
-          message: "You have {{ states('sensor.household_tasks_overdue') }} overdue chore(s)"
+          message: "You have {{ states('sensor.simple_chores_overdue') }} overdue chore(s)"
 ```
 
 ## License

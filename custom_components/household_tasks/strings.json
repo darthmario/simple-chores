@@ -2,8 +2,8 @@
   "config": {
     "step": {
       "user": {
-        "title": "Set up Household Tasks",
-        "description": "Configure your household task tracker. You can change these settings later in the integration options.",
+        "title": "Set up Simple Chores",
+        "description": "Configure your simple chore tracker. You can change these settings later in the integration options.",
         "data": {
           "notifications_enabled": "Enable daily notifications",
           "notification_time": "Notification time"
@@ -11,14 +11,14 @@
       }
     },
     "abort": {
-      "already_configured": "Household Tasks is already configured."
+      "already_configured": "Simple Chores is already configured."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Household Tasks Options",
-        "description": "Configure notification settings for your household tasks.",
+        "title": "Simple Chores Options",
+        "description": "Configure notification settings for your simple chores.",
         "data": {
           "notifications_enabled": "Enable daily notifications",
           "notification_time": "Notification time",

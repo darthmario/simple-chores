@@ -1,5 +1,7 @@
 {
-  "name": "Household Tasks",
+  "name": "Simple Chores",
   "homeassistant": "2024.1.0",
-  "render_readme": true
+  "render_readme": true,
+  "domains": ["simple_chores"],
+  "iot_class": "local_push"
 }

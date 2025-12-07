@@ -1,13 +1,13 @@
 {
-  "domain": "household_tasks",
-  "name": "Household Tasks",
-  "version": "1.0.0",
-  "documentation": "https://github.com/nathancraddock/household_tasks",
-  "issue_tracker": "https://github.com/nathancraddock/household_tasks/issues",
+  "domain": "simple_chores",
+  "name": "Simple Chores",
   "codeowners": ["@nathancraddock"],
-  "dependencies": [],
-  "requirements": ["python-dateutil>=2.8.0"],
   "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/nathancraddock/simple_chores",
   "integration_type": "service",
-  "iot_class": "local_push"
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/nathancraddock/simple_chores/issues",
+  "requirements": ["python-dateutil>=2.8.0"],
+  "version": "1.0.0"
 }
