@@ -422,7 +422,7 @@ async def _async_register_frontend_resources(hass: HomeAssistant) -> None:
             except Exception as err:
                 _LOGGER.debug("aiohttp router method failed: %s", err)
         
-        # Method 3: Frontend component approach
+        # Method 3: Frontend component approach with automatic resource registration
         if not registered:
             try:
                 from homeassistant.components.frontend import add_extra_js_url
@@ -437,6 +437,10 @@ async def _async_register_frontend_resources(hass: HomeAssistant) -> None:
                 shutil.copy2(card_file, target_file)
                 
                 add_extra_js_url(hass, "/local/simple-chores-card.js")
+                
+                # Also try to auto-register with Lovelace
+                await _async_auto_register_lovelace_resource(hass, "/local/simple-chores-card.js")
+                
                 registered = True
                 _LOGGER.info("Card copied to www and registered via add_extra_js_url")
             except Exception as err:
@@ -465,13 +469,111 @@ async def _async_add_to_lovelace_resources(hass: HomeAssistant) -> None:
     try:
         # For most reliability, just let the user add manually
         _LOGGER.info(
-            "To use the Simple Chores card, add this to your Lovelace resources:"
+            "Simple Chores card should now be automatically available!"
         )
-        _LOGGER.info("URL: /local/simple-chores-card.js")
-        _LOGGER.info("Type: JavaScript Module")
+        _LOGGER.info("If not, manually add: /local/simple-chores-card.js to Lovelace resources")
         
     except Exception as err:
         _LOGGER.debug("Resource registration info failed: %s", err)
+
+
+async def _async_auto_register_lovelace_resource(hass: HomeAssistant, url: str) -> None:
+    """Automatically register a resource with Lovelace."""
+    try:
+        # Method 1: Use Lovelace config API directly
+        from homeassistant.components import lovelace
+        
+        # Get the lovelace config
+        ll_config = await lovelace.async_get_lovelace_config(hass)
+        
+        # Check if resources exist and add our card
+        if "resources" not in ll_config:
+            ll_config["resources"] = []
+        
+        # Check if already exists
+        card_resource = {
+            "url": url,
+            "type": "module"
+        }
+        
+        existing = any(
+            r.get("url") == url for r in ll_config["resources"]
+        )
+        
+        if not existing:
+            ll_config["resources"].append(card_resource)
+            await lovelace.async_save_config(hass, ll_config)
+            _LOGGER.info("Successfully auto-added card to Lovelace resources!")
+            return True
+        else:
+            _LOGGER.info("Card resource already exists in Lovelace config")
+            return True
+            
+    except Exception as err:
+        _LOGGER.debug("Method 1 (Lovelace API) failed: %s", err)
+    
+    try:
+        # Method 2: Use websocket to send resource update
+        from homeassistant.components import websocket_api
+        
+        # Create a synthetic websocket message to add the resource
+        resource_data = {
+            "url": url,
+            "res_type": "module"
+        }
+        
+        # Try to add via frontend websocket commands
+        if hasattr(hass.data.get("frontend"), "async_get_resources"):
+            resources = await hass.data["frontend"].async_get_resources()
+            if url not in [r["url"] for r in resources]:
+                # Use internal API to add resource
+                hass.data["frontend"].async_add_resource(resource_data)
+                _LOGGER.info("Added card resource via frontend API")
+                return True
+        
+    except Exception as err:
+        _LOGGER.debug("Method 2 (Websocket API) failed: %s", err)
+    
+    try:
+        # Method 3: Direct file modification approach
+        import json
+        import os
+        
+        # Try to modify .storage/lovelace_resources directly (careful approach)
+        storage_path = hass.config.path(".storage/lovelace_resources")
+        
+        if os.path.exists(storage_path):
+            with open(storage_path, 'r') as f:
+                storage_data = json.load(f)
+            
+            resources = storage_data.get("data", {}).get("items", [])
+            
+            # Check if resource already exists
+            existing = any(item.get("url") == url for item in resources)
+            
+            if not existing:
+                new_resource = {
+                    "id": f"simple_chores_{len(resources)}",
+                    "url": url,
+                    "type": "module"
+                }
+                resources.append(new_resource)
+                
+                # Save back to file
+                with open(storage_path, 'w') as f:
+                    json.dump(storage_data, f, indent=2)
+                
+                _LOGGER.info("Added card resource via direct storage modification")
+                
+                # Fire event to reload resources
+                hass.bus.async_fire("lovelace_updated", {"mode": "storage"})
+                return True
+        
+    except Exception as err:
+        _LOGGER.debug("Method 3 (Direct storage) failed: %s", err)
+    
+    _LOGGER.info("Automatic resource registration not successful - manual addition needed")
+    return False
 
 
 async def _async_register_card_resource(hass: HomeAssistant) -> None:
