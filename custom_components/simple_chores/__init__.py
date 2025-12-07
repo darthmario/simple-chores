@@ -144,6 +144,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Listen for options updates
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
+    # Register frontend resources
+    await _async_register_frontend_resources(hass)
+
     return True
 
 
@@ -373,3 +376,24 @@ async def _async_send_due_notification(
             )
         except Exception as err:
             _LOGGER.warning("Failed to send notification to %s: %s", target, err)
+
+
+async def _async_register_frontend_resources(hass: HomeAssistant) -> None:
+    """Register frontend resources for the Lovelace card."""
+    try:
+        # Register the card JavaScript file as a static path
+        hass.http.register_static_path(
+            f"/{DOMAIN}/simple-chores-card.js",
+            hass.config.path(f"custom_components/{DOMAIN}/www/simple-chores-card.js"),
+            True,
+        )
+        
+        _LOGGER.info(
+            "Simple Chores card is available at: /%s/simple-chores-card.js", DOMAIN
+        )
+        _LOGGER.info(
+            "Add this to your Lovelace resources: /%s/simple-chores-card.js", DOMAIN
+        )
+        
+    except Exception as err:
+        _LOGGER.warning("Failed to register frontend resources: %s", err)

@@ -113,26 +113,33 @@ service: simple_chores.send_due_notification
 
 ## Custom Lovelace Card
 
-A custom card is included for a beautiful chore management UI.
+A beautiful custom card is **automatically included** with the integration!
 
-### Installation
+### Automatic Installation ✨
 
-1. Copy `household-tasks-card/household-tasks-card.js` to your `www` folder
-2. Add the resource in your Lovelace configuration:
+When you install the Simple Chores integration, the card is automatically made available. No manual file copying required!
 
-```yaml
-resources:
-  - url: /local/household-tasks-card.js
-    type: module
-```
+### Manual Setup (One-time)
 
-### Usage
+1. **Add the resource** in your Lovelace configuration:
+   - Go to **Settings** → **Dashboards** → **Resources** (⋮ menu)
+   - Click **Add Resource**
+   - URL: `/simple_chores/simple-chores-card.js`
+   - Resource type: **JavaScript Module**
+   - Click **Create**
 
-```yaml
-type: custom:household-tasks-card
-show_completed: false
-default_room: all
-```
+2. **Add the card** to your dashboard:
+   ```yaml
+   type: custom:simple-chores-card
+   show_completed: false
+   default_room: all
+   ```
+
+### Alternative: Copy Method
+
+If the automatic method doesn't work, you can copy the file:
+1. Copy `custom_components/simple_chores/www/simple-chores-card.js` to your `www` folder
+2. Add resource: `/local/simple-chores-card.js`
 
 ### Card Features
 
