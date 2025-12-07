@@ -425,16 +425,22 @@ async def _async_register_frontend_resources(hass: HomeAssistant) -> None:
         # Method 3: HACS community folder approach (ALWAYS try this for HACS compatibility)
         try:
             from homeassistant.components.frontend import add_extra_js_url
+            import asyncio
             
             # Copy the file to HACS community directory structure
-            import shutil
             community_dir = hass.config.path("www/community/simple-chores")
-            if not os.path.exists(community_dir):
-                os.makedirs(community_dir)
             
-            target_file = os.path.join(community_dir, "simple-chores-card.js")
-            # Always copy to ensure file is up to date
-            shutil.copy2(card_file, target_file)
+            # Use async file operations to avoid blocking
+            def _copy_file():
+                import shutil
+                if not os.path.exists(community_dir):
+                    os.makedirs(community_dir)
+                target_file = os.path.join(community_dir, "simple-chores-card.js")
+                shutil.copy2(card_file, target_file)
+                return target_file
+            
+            # Run file copy in executor to avoid blocking the event loop
+            target_file = await hass.async_add_executor_job(_copy_file)
             
             card_url = "/local/community/simple-chores/simple-chores-card.js"
             add_extra_js_url(hass, card_url)
