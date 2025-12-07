@@ -1,4 +1,4 @@
-"""The Household Tasks integration."""
+"""The Simple Chores integration."""
 from __future__ import annotations
 
 import logging

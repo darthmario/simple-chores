@@ -1,4 +1,4 @@
-"""DataUpdateCoordinator for the Household Tasks integration."""
+"""DataUpdateCoordinator for the Simple Chores integration."""
 from __future__ import annotations
 
 import logging
@@ -133,9 +133,8 @@ class HouseholdTasksCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         rooms: list[dict[str, Any]] = []
 
         # Get HA Areas
-        area_registry: AreaRegistry = self.hass.helpers.area_registry.async_get(
-            self.hass
-        )
+        from homeassistant.helpers import area_registry as ar
+        area_registry: AreaRegistry = ar.async_get(self.hass)
         for area in area_registry.async_list_areas():
             rooms.append(
                 {
