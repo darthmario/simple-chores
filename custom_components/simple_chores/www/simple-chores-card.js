@@ -3,33 +3,49 @@
  * A custom Lovelace card for managing simple chores
  */
 
-// Define card after DOM is loaded and HA is ready
-(function() {
-  'use strict';
+// Use the standard approach for getting LitElement in HA
+console.info("Simple Chores Card: Initializing...");
 
-  // Wait for HA to be ready
-  const defineCard = () => {
-    // Get LitElement from HA
-    const LitElement = customElements.get("hui-error-card")?.constructor?.prototype?.constructor ||
-                      customElements.get("hui-view")?.constructor ||
-                      window.LitElement ||
-                      HTMLElement;
-
-    const html = window.html || ((strings, ...values) => {
-      let result = strings[0];
-      for (let i = 0; i < values.length; i++) {
-        result += values[i] + strings[i + 1];
-      }
-      return result;
-    });
-
-    const css = window.css || ((strings) => strings[0]);
-
-    if (!LitElement || LitElement === HTMLElement) {
-      console.warn("Simple Chores Card: LitElement not found, deferring...");
-      setTimeout(defineCard, 1000);
-      return;
+// Wait for LitElement to be available
+const waitForLitElement = async () => {
+  let attempts = 0;
+  while (attempts < 50) {
+    if (window.LitElement) {
+      return window.LitElement;
     }
+    
+    // Try to get from existing cards
+    const errorCard = customElements.get("hui-error-card");
+    if (errorCard) {
+      return Object.getPrototypeOf(errorCard);
+    }
+    
+    const haCard = customElements.get("ha-card");
+    if (haCard) {
+      return Object.getPrototypeOf(haCard);
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, 100));
+    attempts++;
+  }
+  
+  console.error("Simple Chores Card: Could not find LitElement after waiting");
+  return null;
+};
+
+// Initialize card
+(async () => {
+  const LitElement = await waitForLitElement();
+  
+  if (!LitElement) {
+    console.error("Simple Chores Card: Failed to get LitElement");
+    return;
+  }
+  
+  const html = LitElement.prototype.html || window.html;
+  const css = LitElement.prototype.css || window.css;
+  
+  console.info("Simple Chores Card: LitElement found, defining card...");
 
 class SimpleChoresCard extends LitElement {
   static get properties() {
@@ -825,17 +841,11 @@ class SimpleChoresCardEditor extends LitElement {
   }
 }
 
-    // Register the custom elements
-    customElements.define("simple-chores-card", SimpleChoresCard);
-    customElements.define("simple-chores-card-editor", SimpleChoresCardEditor);
-  };
-
-  // Call defineCard when HA is ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', defineCard);
-  } else {
-    defineCard();
-  }
+  // Register the custom elements
+  customElements.define("simple-chores-card", SimpleChoresCard);
+  customElements.define("simple-chores-card-editor", SimpleChoresCardEditor);
+  
+  console.info("Simple Chores Card: Successfully registered!");
 })();
 
 // Wait for customCards to be available and register
