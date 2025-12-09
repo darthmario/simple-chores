@@ -218,16 +218,25 @@ class SimpleChoresCard extends LitElement {
   _getRooms() {
     if (!this.hass) return [];
     
-    // Get rooms from sensor attributes (the coordinator provides this data)
-    const totalSensor = this.hass.states["sensor.simple_chores_total"];
+    // Debug: Check what simple_chores sensors exist
+    const allSensors = Object.keys(this.hass.states).filter(key => 
+      key.startsWith('sensor.simple_chores')
+    );
+    console.log("Simple Chores Card: Available sensors:", allSensors);
     
-    if (totalSensor && totalSensor.attributes && totalSensor.attributes.rooms) {
-      const rooms = totalSensor.attributes.rooms;
-      console.log("Simple Chores Card: _getRooms() - Found rooms in sensor:", rooms);
-      return rooms;
+    // Check each sensor for room data
+    for (const sensorName of allSensors) {
+      const sensor = this.hass.states[sensorName];
+      if (sensor && sensor.attributes) {
+        console.log(`Simple Chores Card: ${sensorName} attributes:`, sensor.attributes);
+        if (sensor.attributes.rooms) {
+          console.log(`Simple Chores Card: Found rooms in ${sensorName}:`, sensor.attributes.rooms);
+          return sensor.attributes.rooms;
+        }
+      }
     }
     
-    console.log("Simple Chores Card: _getRooms() - No rooms found in sensor, falling back to HA areas");
+    console.log("Simple Chores Card: No rooms found in any sensor, falling back to HA areas");
     
     // Fallback: Get just Home Assistant areas if sensor data not available
     const areas = Object.values(this.hass.areas || {}).map(area => ({
@@ -235,7 +244,7 @@ class SimpleChoresCard extends LitElement {
       name: area.name || area.area_id
     }));
     
-    console.log("Simple Chores Card: _getRooms() - HA areas fallback:", areas);
+    console.log("Simple Chores Card: HA areas fallback:", areas);
     return areas;
   }
 
