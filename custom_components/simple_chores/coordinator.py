@@ -76,11 +76,18 @@ class HouseholdTasksCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Calculate due chores and prepare data for entities."""
+        _LOGGER.info("Coordinator: Starting data update...")
         today = date.today()
         week_start, week_end = get_week_bounds(today)
 
         # Get all rooms (HA Areas + custom)
+        _LOGGER.info("Coordinator: Getting all rooms...")
         all_rooms = await self._get_all_rooms()
+        _LOGGER.info("Coordinator: Found %d rooms", len(all_rooms))
+        
+        # Log store data
+        _LOGGER.info("Coordinator: Store has %d chores", len(self.store.chores))
+        _LOGGER.info("Coordinator: Store chores: %s", list(self.store.chores.keys()))
 
         # Categorize chores
         due_today: list[dict[str, Any]] = []
@@ -111,7 +118,7 @@ class HouseholdTasksCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if room_id in by_room:
                 by_room[room_id].append(chore_with_room)
 
-        return {
+        result = {
             "today": today.isoformat(),
             "week_start": week_start.isoformat(),
             "week_end": week_end.isoformat(),
@@ -127,6 +134,11 @@ class HouseholdTasksCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "chores": list(self.store.chores.values()),
             "total_chores": len(self.store.chores),
         }
+        
+        _LOGGER.info("Coordinator: Data update complete. Total chores: %d, Due today: %d, Due this week: %d, Overdue: %d", 
+                     len(self.store.chores), len(due_today), len(due_this_week), len(overdue))
+        
+        return result
 
     async def _get_all_rooms(self) -> list[dict[str, Any]]:
         """Get all rooms from HA Area Registry and custom rooms."""

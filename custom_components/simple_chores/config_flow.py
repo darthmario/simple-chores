@@ -38,7 +38,7 @@ class HouseholdTasksConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             return self.async_create_entry(
-                title="Household Tasks",
+                title="Simple Chores",
                 data={},
                 options={
                     CONF_NOTIFICATIONS_ENABLED: user_input.get(
