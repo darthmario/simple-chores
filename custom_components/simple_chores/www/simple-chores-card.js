@@ -229,6 +229,16 @@ class SimpleChoresCard extends LitElement {
     console.log("Simple Chores Card: simple_chores sensors:", simpleChoreSensors);
     console.log("Simple Chores Card: household_tasks sensors:", householdTaskSensors);
     
+    // Debug: Check if we have ANY entities from this integration
+    const allHouseholdEntities = Object.keys(this.hass.states).filter(key => 
+      key.includes('household_tasks') || key.includes('simple_chores')
+    );
+    console.log("Simple Chores Card: All integration entities:", allHouseholdEntities);
+    
+    // Check if calendar has any room data
+    const calendar = this.hass.states["calendar.household_tasks"];
+    console.log("Simple Chores Card: Calendar entity:", calendar);
+    
     const allSensors = [...simpleChoreSensors, ...householdTaskSensors];
     
     // Try both possible sensor names for total sensor
