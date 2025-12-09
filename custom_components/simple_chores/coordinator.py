@@ -76,6 +76,7 @@ class HouseholdTasksCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Calculate due chores and prepare data for entities."""
+        _LOGGER.error("SIMPLE CHORES: Coordinator data update - THIS SHOULD ALWAYS APPEAR!")
         _LOGGER.info("Coordinator: Starting data update...")
         today = date.today()
         week_start, week_end = get_week_bounds(today)

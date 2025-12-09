@@ -120,6 +120,7 @@ SERVICE_GET_HISTORY_SCHEMA = vol.Schema(
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Household Tasks from a config entry."""
+    _LOGGER.error("SIMPLE CHORES: Integration setup starting - THIS SHOULD ALWAYS APPEAR!")
     _LOGGER.info("Setting up Simple Chores integration...")
     hass.data.setdefault(DOMAIN, {})
 
