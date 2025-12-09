@@ -340,10 +340,35 @@ class SimpleChoresCard extends LitElement {
       icon: this._newRoomIcon || "mdi:home"
     }).then((result) => {
       console.log("Simple Chores Card: Service call succeeded:", result);
-      this._showToast(`Room "${roomName}" created successfully!`);
-      this._closeAddRoomModal();
-      // Force a refresh of the card data
-      setTimeout(() => this.requestUpdate(), 1000); // Wait a moment for the backend to update
+      
+      // Wait and check if the room data updates
+      const checkForRoom = (attempts = 0) => {
+        setTimeout(() => {
+          const roomsAfter = this._getRooms();
+          const foundNewRoom = roomsAfter.find(room => 
+            room.name.toLowerCase() === roomName.toLowerCase()
+          );
+          
+          console.log(`Simple Chores Card: Attempt ${attempts + 1} - Rooms count: ${roomsAfter.length}, Found new room:`, foundNewRoom);
+          
+          if (foundNewRoom) {
+            console.log("Simple Chores Card: New room found in data!");
+            this._showToast(`Room "${roomName}" created successfully!`);
+            this._closeAddRoomModal();
+            this.requestUpdate();
+          } else if (attempts < 10) {
+            // Try again, up to 10 attempts (5 seconds total)
+            checkForRoom(attempts + 1);
+          } else {
+            console.warn("Simple Chores Card: Room not found after 10 attempts");
+            this._showToast(`Room "${roomName}" created, but may require a page refresh to appear`);
+            this._closeAddRoomModal();
+            this.requestUpdate();
+          }
+        }, 500);
+      };
+      
+      checkForRoom();
     }).catch(error => {
       console.error("Simple Chores Card: Service call failed:", error);
       this._showToast(`Error creating room: ${error.message}`);
