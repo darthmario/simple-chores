@@ -178,14 +178,18 @@ class SimpleChoresCard extends LitElement {
 
   _renderChore(chore) {
     console.debug("Simple Chores Card: Rendering chore:", chore);
-    const isOverdue = new Date(chore.next_due) < new Date().setHours(0,0,0,0);
+    
+    // Handle different property names from sensor attributes vs coordinator data
+    const dueDate = chore.next_due || chore.due_date;
+    const roomName = chore.room_name || chore.room || 'Unknown Room';
+    const isOverdue = new Date(dueDate) < new Date().setHours(0,0,0,0);
     
     return html`
       <div class="chore-item ${isOverdue ? 'overdue' : ''}">
         <div class="chore-info">
           <span class="chore-name">${chore.name}</span>
-          <span class="chore-room">${chore.room_name || 'Unknown Room'}</span>
-          <span class="chore-due">Due: ${this._formatDate(chore.next_due)}</span>
+          <span class="chore-room">${roomName}</span>
+          <span class="chore-due">Due: ${this._formatDate(dueDate)}</span>
         </div>
         <div class="chore-actions">
           <mwc-button 
@@ -301,7 +305,10 @@ class SimpleChoresCard extends LitElement {
 
   _filterChoresByRoom(chores) {
     if (this._selectedRoom === "all") return chores;
-    return chores.filter(chore => chore.room_id === this._selectedRoom);
+    return chores.filter(chore => {
+      // Handle different property names - check both room_id and room
+      return chore.room_id === this._selectedRoom || chore.room === this._selectedRoom;
+    });
   }
 
   _formatDate(dateStr) {
