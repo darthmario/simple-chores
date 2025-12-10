@@ -18,6 +18,7 @@ from .const import (
     ATTR_CHORE_NAME,
     ATTR_FREQUENCY,
     ATTR_ICON,
+    ATTR_NEXT_DUE,
     ATTR_ROOM_ID,
     ATTR_ROOM_NAME,
     ATTR_START_DATE,
@@ -95,6 +96,7 @@ SERVICE_UPDATE_CHORE_SCHEMA = vol.Schema(
         vol.Optional(ATTR_CHORE_NAME): cv.string,
         vol.Optional(ATTR_ROOM_ID): cv.string,
         vol.Optional(ATTR_FREQUENCY): vol.In(FREQUENCIES),
+        vol.Optional(ATTR_NEXT_DUE): cv.date,
     }
 )
 
@@ -210,7 +212,8 @@ async def _async_setup_services(
         name = call.data.get(ATTR_CHORE_NAME)
         room_id = call.data.get(ATTR_ROOM_ID)
         frequency = call.data.get(ATTR_FREQUENCY)
-        await coordinator.async_update_chore(chore_id, name, room_id, frequency)
+        next_due = call.data.get(ATTR_NEXT_DUE)
+        await coordinator.async_update_chore(chore_id, name, room_id, frequency, next_due)
 
     async def handle_complete_chore(call: ServiceCall) -> None:
         """Handle complete_chore service call."""

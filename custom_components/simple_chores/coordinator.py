@@ -109,7 +109,7 @@ class HouseholdTasksCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             elif next_due == today:
                 due_today.append(chore_with_room)
 
-            if week_start <= next_due <= week_end:
+            if week_start <= next_due <= week_end and next_due > today:
                 due_this_week.append(chore_with_room)
 
             # Group by room
@@ -275,9 +275,10 @@ class HouseholdTasksCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         name: str | None = None,
         room_id: str | None = None,
         frequency: str | None = None,
+        next_due: date | None = None,
     ) -> dict[str, Any] | None:
         """Update an existing chore."""
-        chore = self.store.update_chore(chore_id, name, room_id, frequency)
+        chore = self.store.update_chore(chore_id, name, room_id, frequency, next_due)
         if chore:
             await self.store.async_save()
             await self.async_request_refresh()

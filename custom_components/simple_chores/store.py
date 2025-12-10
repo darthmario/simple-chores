@@ -116,6 +116,7 @@ class HouseholdTasksStore:
         name: str | None = None,
         room_id: str | None = None,
         frequency: str | None = None,
+        next_due: date | None = None,
     ) -> dict[str, Any] | None:
         """Update an existing chore."""
         if chore_id not in self._data["chores"]:
@@ -127,6 +128,8 @@ class HouseholdTasksStore:
             chore["room_id"] = room_id
         if frequency is not None:
             chore["frequency"] = frequency
+        if next_due is not None:
+            chore["next_due"] = next_due.isoformat()
         return chore
 
     def remove_chore(self, chore_id: str) -> bool:

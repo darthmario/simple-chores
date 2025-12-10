@@ -144,6 +144,12 @@ update_chore:
               label: "Quarterly"
             - value: "yearly"
               label: "Yearly"
+    next_due:
+      name: Next Due Date
+      description: The new due date for the chore.
+      required: false
+      selector:
+        date:
 
 complete_chore:
   name: Complete Chore

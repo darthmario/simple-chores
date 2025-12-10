@@ -63,6 +63,7 @@ class SimpleChoresCard extends LitElement {
       _editChoreName: { type: String },
       _editChoreRoom: { type: String },
       _editChoreFrequency: { type: String },
+      _editChoreDueDate: { type: String },
     };
   }
 
@@ -83,6 +84,7 @@ class SimpleChoresCard extends LitElement {
     this._editChoreName = "";
     this._editChoreRoom = "";
     this._editChoreFrequency = "daily";
+    this._editChoreDueDate = "";
   }
 
   static getStubConfig() {
@@ -772,6 +774,9 @@ class SimpleChoresCard extends LitElement {
     // Handle different property names for room_id
     this._editChoreRoom = chore.room_id || chore.room || "";
     this._editChoreFrequency = chore.frequency || "daily";
+    
+    // Handle different property names for due date
+    this._editChoreDueDate = chore.next_due || chore.due_date || "";
   }
 
   _closeEditChoreModal() {
@@ -780,6 +785,7 @@ class SimpleChoresCard extends LitElement {
     this._editChoreName = "";
     this._editChoreRoom = "";
     this._editChoreFrequency = "daily";
+    this._editChoreDueDate = "";
   }
 
   _handleEditChoreNameInput(e) {
@@ -794,6 +800,10 @@ class SimpleChoresCard extends LitElement {
     this._editChoreFrequency = e.target.value;
   }
 
+  _handleEditChoreDueDateInput(e) {
+    this._editChoreDueDate = e.target.value;
+  }
+
   _submitEditChore() {
     if (!this._editChoreName.trim()) {
       this._showToast("Chore name is required");
@@ -805,12 +815,19 @@ class SimpleChoresCard extends LitElement {
       return;
     }
 
-    this.hass.callService("simple_chores", "update_chore", {
+    const serviceData = {
       chore_id: this._editChoreId,
       name: this._editChoreName.trim(),
       room_id: this._editChoreRoom,
       frequency: this._editChoreFrequency
-    }).then(() => {
+    };
+    
+    // Only include next_due if a date is provided
+    if (this._editChoreDueDate.trim()) {
+      serviceData.next_due = this._editChoreDueDate;
+    }
+
+    this.hass.callService("simple_chores", "update_chore", serviceData).then(() => {
       this._showToast(`Chore "${this._editChoreName}" updated successfully!`);
       this._closeEditChoreModal();
       this.requestUpdate();
@@ -856,7 +873,7 @@ class SimpleChoresCard extends LitElement {
               >
                 <option value="">Select a room...</option>
                 ${rooms.map(room => html`
-                  <option value=${room.id} ?selected=${this._editChoreRoom === room.id}>
+                  <option value=${room.id}>
                     ${room.name}
                   </option>
                 `)}
@@ -875,6 +892,15 @@ class SimpleChoresCard extends LitElement {
                 <option value="quarterly">Quarterly</option>
                 <option value="yearly">Yearly</option>
               </select>
+            </div>
+            <div class="form-group">
+              <label for="edit-chore-due-date">Due Date</label>
+              <input 
+                id="edit-chore-due-date"
+                type="date" 
+                .value=${this._editChoreDueDate}
+                @input=${this._handleEditChoreDueDateInput}
+              />
             </div>
           </div>
           <div class="modal-footer">
