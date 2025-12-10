@@ -137,9 +137,9 @@ class SimpleChoresCard extends LitElement {
   }
 
   _renderStats() {
-    const dueToday = this.hass.states["sensor.simple_chores_due_today"]?.state || "0";
-    const overdue = this.hass.states["sensor.simple_chores_overdue"]?.state || "0";
-    const total = this.hass.states["sensor.simple_chores_total"]?.state || "0";
+    const dueToday = this.hass.states["sensor.chores_due_today"]?.state || "0";
+    const overdue = this.hass.states["sensor.overdue_chores"]?.state || "0";
+    const total = this.hass.states["sensor.total_chores"]?.state || "0";
     
     return html`
       <div class="stats">
@@ -209,8 +209,8 @@ class SimpleChoresCard extends LitElement {
     if (!this.hass) return [];
     
     const sensorName = period === "today" ? 
-      "sensor.simple_chores_due_today" : 
-      "sensor.simple_chores_due_this_week";
+      "sensor.chores_due_today" : 
+      "sensor.chores_due_this_week";
     
     return this.hass.states[sensorName]?.attributes?.chores || [];
   }
@@ -218,16 +218,20 @@ class SimpleChoresCard extends LitElement {
   _getRooms() {
     if (!this.hass) return [];
     
-    // Debug: Check what sensors exist (both old and new names)
+    // Debug: Check what sensors exist (check all possible naming patterns)
     const simpleChoreSensors = Object.keys(this.hass.states).filter(key => 
       key.startsWith('sensor.simple_chores')
     );
     const householdTaskSensors = Object.keys(this.hass.states).filter(key => 
       key.startsWith('sensor.household_tasks')
     );
+    const choresSensors = Object.keys(this.hass.states).filter(key => 
+      key.startsWith('sensor.') && (key.includes('chores') || key.includes('overdue'))
+    );
     
     console.log("Simple Chores Card: simple_chores sensors:", simpleChoreSensors);
     console.log("Simple Chores Card: household_tasks sensors:", householdTaskSensors);
+    console.log("Simple Chores Card: all chores sensors:", choresSensors);
     
     // Debug: Check if we have ANY entities from this integration
     const allHouseholdEntities = Object.keys(this.hass.states).filter(key => 
@@ -252,6 +256,7 @@ class SimpleChoresCard extends LitElement {
     
     // Try both possible sensor names for total sensor
     const possibleTotalSensors = [
+      "sensor.total_chores",
       "sensor.simple_chores_total",
       "sensor.household_tasks_total"
     ];
