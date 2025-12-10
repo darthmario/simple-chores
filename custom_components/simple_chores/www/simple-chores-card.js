@@ -595,6 +595,7 @@ class SimpleChoresCard extends LitElement {
     this._newChoreName = "";
     this._newChoreRoom = "";
     this._newChoreFrequency = "daily";
+    this._newChoreDueDate = "";
   }
 
   _closeAddChoreModal() {
@@ -602,6 +603,7 @@ class SimpleChoresCard extends LitElement {
     this._newChoreName = "";
     this._newChoreRoom = "";
     this._newChoreFrequency = "daily";
+    this._newChoreDueDate = "";
   }
 
   _handleChoreNameInput(e) {
@@ -616,6 +618,9 @@ class SimpleChoresCard extends LitElement {
     this._newChoreFrequency = e.target.value;
   }
 
+  _handleChoreDueDateInput(e) {
+    this._newChoreDueDate = e.target.value;
+  }
 
   _submitAddChore() {
     if (!this._newChoreName.trim()) {
@@ -628,11 +633,19 @@ class SimpleChoresCard extends LitElement {
       return;
     }
 
-    this.hass.callService("simple_chores", "add_chore", {
+    // Prepare service call data
+    const serviceData = {
       name: this._newChoreName.trim(),
       room_id: this._newChoreRoom,
       frequency: this._newChoreFrequency
-    }).then(() => {
+    };
+
+    // Add start_date if provided
+    if (this._newChoreDueDate.trim()) {
+      serviceData.start_date = this._newChoreDueDate.trim();
+    }
+
+    this.hass.callService("simple_chores", "add_chore", serviceData).then(() => {
       this._showToast(`Chore "${this._newChoreName}" created successfully!`);
       this._closeAddChoreModal();
       // Force a refresh of the card data
@@ -698,6 +711,17 @@ class SimpleChoresCard extends LitElement {
                 <option value="quarterly">Quarterly</option>
                 <option value="yearly">Yearly</option>
               </select>
+            </div>
+            <div class="form-group">
+              <label for="chore-due-date">Due Date (optional)</label>
+              <input 
+                id="chore-due-date"
+                type="date" 
+                .value=${this._newChoreDueDate}
+                @input=${this._handleChoreDueDateInput}
+                title="Leave empty to start today"
+              />
+              <small>Leave empty to start today, or select a future date</small>
             </div>
           </div>
           <div class="modal-footer">
