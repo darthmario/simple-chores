@@ -220,6 +220,14 @@ class SimpleChoresCard extends LitElement {
             ✏️ Edit
           </mwc-button>
           <mwc-button 
+            @click=${() => this._deleteChore(chore.id, chore.name)}
+            outlined
+            class="delete-btn"
+            title="Delete Chore"
+          >
+            🗑️ Delete
+          </mwc-button>
+          <mwc-button 
             @click=${() => this._completeChore(chore.id)}
             class="complete-btn"
           >
@@ -879,6 +887,24 @@ class SimpleChoresCard extends LitElement {
         </div>
       </div>
     `;
+  }
+
+  async _deleteChore(choreId, choreName) {
+    if (!confirm(`Are you sure you want to delete the chore "${choreName}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await this.hass.callService("simple_chores", "remove_chore", {
+        chore_id: choreId
+      });
+      
+      this._showToast(`Chore "${choreName}" deleted successfully!`);
+      this.requestUpdate();
+    } catch (error) {
+      console.error("Simple Chores Card: Failed to delete chore:", error);
+      this._showToast(`Error deleting chore: ${error.message}`);
+    }
   }
 
   static get styles() {
