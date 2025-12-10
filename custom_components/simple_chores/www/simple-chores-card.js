@@ -65,6 +65,7 @@ class SimpleChoresCard extends LitElement {
       _editChoreFrequency: { type: String },
       _editChoreDueDate: { type: String },
       _showAllChoresModal: { type: Boolean },
+      _showHistoryModal: { type: Boolean },
     };
   }
 
@@ -87,6 +88,7 @@ class SimpleChoresCard extends LitElement {
     this._editChoreFrequency = "daily";
     this._editChoreDueDate = "";
     this._showAllChoresModal = false;
+    this._showHistoryModal = false;
   }
 
   static getStubConfig() {
@@ -139,6 +141,9 @@ class SimpleChoresCard extends LitElement {
             <button class="manage-rooms-btn" @click=${this._openManageRoomsModal} title="Manage Rooms">
               <ha-icon icon="mdi:cog"></ha-icon>
             </button>
+            <button class="history-btn" @click=${this._openHistoryModal} title="View Completion History">
+              <ha-icon icon="mdi:history"></ha-icon>
+            </button>
             <button class="add-chore-btn" @click=${this._openAddChoreModal} title="Add New Chore">
               <ha-icon icon="mdi:playlist-plus"></ha-icon>
             </button>
@@ -156,6 +161,7 @@ class SimpleChoresCard extends LitElement {
         ${this._renderAddChoreModal()}
         ${this._renderEditChoreModal()}
         ${this._renderAllChoresModal()}
+        ${this._renderHistoryModal()}
       </ha-card>
     `;
   }
@@ -287,7 +293,32 @@ class SimpleChoresCard extends LitElement {
       "sensor.chores_due_today" : 
       "sensor.chores_due_this_week";
     
-    return this.hass.states[sensorName]?.attributes?.chores || [];
+    const chores = this.hass.states[sensorName]?.attributes?.chores || [];
+    
+    // Debug log to see what we're getting
+    console.log(`Simple Chores Card: ${sensorName} raw chores:`, chores);
+    
+    // Process chores to ensure proper date formatting and properties
+    const processedChores = chores.map(chore => {
+      // Ensure we have the right property names
+      const processedChore = {
+        ...chore,
+        id: chore.id || chore.chore_id,
+        name: chore.name || chore.chore_name,
+        room_id: chore.room_id || chore.room,
+        room_name: chore.room_name || chore.room_name,
+        next_due: chore.next_due || chore.due_date || chore.date,
+        due_date: chore.next_due || chore.due_date || chore.date,
+        frequency: chore.frequency
+      };
+      
+      // Debug log for each chore
+      console.log(`Simple Chores Card: Processed chore:`, processedChore);
+      
+      return processedChore;
+    });
+    
+    return processedChores;
   }
 
   _getRooms() {
@@ -992,35 +1023,67 @@ class SimpleChoresCard extends LitElement {
   }
 
   _getAllChores() {
-    // Get all chores from coordinator data
-    const coordinatorEntity = this.hass.states[`sensor.simple_chores_coordinator`];
-    if (coordinatorEntity && coordinatorEntity.attributes && coordinatorEntity.attributes.chores) {
-      return coordinatorEntity.attributes.chores;
-    }
-    
-    // Fallback: collect chores from due today and due this week, plus get all from rooms
-    const dueToday = this._getDueChores("today");
-    const dueThisWeek = this._getDueChores("week");
-    const rooms = this._getRooms();
-    
-    // Get all chores from room data
+    // Try multiple data sources to get ALL chores
     const allChores = new Map();
     
-    // Add chores that are due
-    [...dueToday, ...dueThisWeek].forEach(chore => {
-      allChores.set(chore.id, chore);
-    });
-    
-    // Try to get more chores from entity attributes if available
-    rooms.forEach(room => {
-      const roomEntity = this.hass.states[`sensor.chores_${room.id}`];
-      if (roomEntity && roomEntity.attributes && roomEntity.attributes.chores) {
-        roomEntity.attributes.chores.forEach(chore => {
+    // Method 1: Look for coordinator data with all chores
+    const entities = Object.keys(this.hass.states);
+    entities.forEach(entityId => {
+      const entity = this.hass.states[entityId];
+      if (entity && entity.attributes) {
+        // Check for chores attribute (coordinator might store all chores here)
+        if (entity.attributes.chores && Array.isArray(entity.attributes.chores)) {
+          entity.attributes.chores.forEach(chore => {
+            allChores.set(chore.id, chore);
+          });
+        }
+        
+        // Check for individual chore data in any entity
+        if (entity.attributes.chore_id && entity.attributes.name) {
+          const chore = {
+            id: entity.attributes.chore_id,
+            name: entity.attributes.name,
+            room_id: entity.attributes.room_id,
+            room_name: entity.attributes.room_name,
+            next_due: entity.attributes.next_due,
+            frequency: entity.attributes.frequency,
+            last_completed: entity.attributes.last_completed,
+            last_completed_by: entity.attributes.last_completed_by
+          };
           allChores.set(chore.id, chore);
-        });
+        }
       }
     });
     
+    // Method 2: Get chores from sensor entities if available
+    entities.filter(id => id.includes('chore')).forEach(entityId => {
+      const entity = this.hass.states[entityId];
+      if (entity && entity.attributes && entity.attributes.name) {
+        const chore = {
+          id: entity.attributes.chore_id || entityId.split('.')[1],
+          name: entity.attributes.name,
+          room_id: entity.attributes.room_id,
+          room_name: entity.attributes.room_name,
+          next_due: entity.attributes.next_due,
+          frequency: entity.attributes.frequency,
+          last_completed: entity.attributes.last_completed,
+          last_completed_by: entity.attributes.last_completed_by
+        };
+        allChores.set(chore.id, chore);
+      }
+    });
+    
+    // Method 3: Fallback to due today/week data if nothing else found
+    if (allChores.size === 0) {
+      const dueToday = this._getDueChores("today");
+      const dueThisWeek = this._getDueChores("week");
+      
+      [...dueToday, ...dueThisWeek].forEach(chore => {
+        allChores.set(chore.id, chore);
+      });
+    }
+    
+    console.log("Simple Chores Card: Found", allChores.size, "chores total");
     return Array.from(allChores.values());
   }
 
@@ -1066,35 +1129,32 @@ class SimpleChoresCard extends LitElement {
                         <span class="chore-frequency">${chore.frequency || 'Unknown'}</span>
                       </div>
                       <div class="chore-actions">
-                        <mwc-button 
-                          @click=${() => this._editChore(chore)}
-                          outlined
-                          class="edit-btn"
+                        <button 
+                          @click=${() => this._editChoreFromModal(chore)}
+                          class="action-btn edit-btn"
                           title="Edit Chore"
                         >
                           ✏️ Edit
-                        </mwc-button>
-                        <mwc-button 
-                          @click=${() => this._deleteChore(chore.id, chore.name)}
-                          outlined
-                          class="delete-btn"
+                        </button>
+                        <button 
+                          @click=${() => this._deleteChoreFromModal(chore.id, chore.name)}
+                          class="action-btn delete-btn"
                           title="Delete Chore"
                         >
                           🗑️ Delete
-                        </mwc-button>
-                        <mwc-button 
-                          @click=${() => this._completeChore(chore.id)}
-                          class="complete-btn"
+                        </button>
+                        <button 
+                          @click=${() => this._completeChoreFromModal(chore.id)}
+                          class="action-btn complete-btn"
                         >
                           ✓ Complete
-                        </mwc-button>
-                        <mwc-button 
-                          @click=${() => this._skipChore(chore.id)} 
-                          outlined
-                          class="skip-btn"
+                        </button>
+                        <button 
+                          @click=${() => this._skipChoreFromModal(chore.id)} 
+                          class="action-btn skip-btn"
                         >
                           ⏭ Skip
-                        </mwc-button>
+                        </button>
                       </div>
                     </div>
                   `;
@@ -1113,6 +1173,187 @@ class SimpleChoresCard extends LitElement {
   _getRoomName(roomId, rooms) {
     const room = rooms.find(r => r.id === roomId);
     return room ? room.name : 'Unknown Room';
+  }
+
+  // Modal action methods that close the all chores modal before performing actions
+  _editChoreFromModal(chore) {
+    console.log("Simple Chores Card: Edit chore from modal:", chore);
+    this._closeAllChoresModal();
+    this._editChore(chore);
+  }
+
+  async _deleteChoreFromModal(choreId, choreName) {
+    this._closeAllChoresModal();
+    await this._deleteChore(choreId, choreName);
+  }
+
+  async _completeChoreFromModal(choreId) {
+    this._closeAllChoresModal();
+    await this._completeChore(choreId);
+  }
+
+  async _skipChoreFromModal(choreId) {
+    this._closeAllChoresModal();
+    await this._skipChore(choreId);
+  }
+
+  _openHistoryModal() {
+    this._showHistoryModal = true;
+  }
+
+  _closeHistoryModal() {
+    this._showHistoryModal = false;
+  }
+
+  async _getCompletionHistory() {
+    try {
+      // Call the get_user_stats service to get completion data
+      const userStatsResult = await this.hass.callService("simple_chores", "get_user_stats");
+      
+      // Try to get history from entity attributes if available
+      const entities = Object.keys(this.hass.states);
+      let history = [];
+      
+      // Look for any entity that might contain completion history
+      for (const entityId of entities) {
+        const entity = this.hass.states[entityId];
+        if (entity && entity.attributes && entity.attributes.completion_history) {
+          history = entity.attributes.completion_history;
+          break;
+        }
+      }
+      
+      // Fallback: try to construct from available data
+      if (history.length === 0) {
+        // Get all entities and check their attributes for completion data
+        for (const entityId of entities) {
+          const entity = this.hass.states[entityId];
+          if (entityId.startsWith('sensor.') && entity.attributes) {
+            if (entity.attributes.last_completed) {
+              // This entity has completion info
+              const completionEntry = {
+                chore_name: entity.attributes.friendly_name || entityId,
+                completed_at: entity.attributes.last_completed,
+                completed_by_name: entity.attributes.last_completed_by || 'Unknown User'
+              };
+              history.push(completionEntry);
+            }
+          }
+        }
+      }
+      
+      // Sort by completion date (newest first)
+      return history.sort((a, b) => new Date(b.completed_at) - new Date(a.completed_at));
+      
+    } catch (error) {
+      console.error("Simple Chores Card: Failed to get completion history:", error);
+      this._showToast("Error loading completion history");
+      return [];
+    }
+  }
+
+  _formatDateTime(dateTimeString) {
+    if (!dateTimeString) return "Unknown Date";
+    
+    try {
+      const date = new Date(dateTimeString);
+      if (isNaN(date.getTime())) return "Invalid Date";
+      
+      return date.toLocaleString();
+    } catch (e) {
+      return "Invalid Date";
+    }
+  }
+
+  _renderHistoryModal() {
+    if (!this._showHistoryModal) {
+      return html``;
+    }
+
+    return html`
+      <div class="modal-overlay" @click=${this._closeHistoryModal}>
+        <div class="modal-content large-modal" @click=${(e) => e.stopPropagation()}>
+          <div class="modal-header">
+            <h3>Completion History</h3>
+            <button class="close-btn" @click=${this._closeHistoryModal}>
+              <ha-icon icon="mdi:close"></ha-icon>
+            </button>
+          </div>
+          <div class="modal-body">
+            ${this._renderHistoryContent()}
+          </div>
+          <div class="modal-footer">
+            <button class="submit-btn" @click=${this._closeHistoryModal}>Close</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderHistoryContent() {
+    return html`
+      <div class="history-loading">
+        <p>Loading completion history...</p>
+        <p><em>Click the refresh button below to load history data.</em></p>
+        <button class="submit-btn" @click=${this._loadHistory}>Load History</button>
+        <div id="history-list"></div>
+      </div>
+    `;
+  }
+
+  async _loadHistory() {
+    const historyContainer = this.shadowRoot?.querySelector('#history-list');
+    if (!historyContainer) return;
+
+    historyContainer.innerHTML = '<p>Loading...</p>';
+    
+    try {
+      const history = await this._getCompletionHistory();
+      
+      if (history.length === 0) {
+        historyContainer.innerHTML = `
+          <div class="no-history">
+            <p><strong>No completion history found.</strong></p>
+            <p>History will appear here after you complete some chores!</p>
+            <p><em>Note: Only recent completions may be available depending on system configuration.</em></p>
+          </div>
+        `;
+        return;
+      }
+
+      const historyHtml = history.map(entry => {
+        return `
+          <div class="history-item">
+            <div class="history-info">
+              <span class="history-chore-name">${entry.chore_name || 'Unknown Chore'}</span>
+              <span class="history-separator">•</span>
+              <span class="history-completed-by">${entry.completed_by_name || 'Unknown User'}</span>
+              <span class="history-separator">•</span>
+              <span class="history-completed-at">${this._formatDateTime(entry.completed_at)}</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      historyContainer.innerHTML = `
+        <div class="history-header">
+          <h4>Recent Completions (${history.length})</h4>
+        </div>
+        <div class="history-list">
+          ${historyHtml}
+        </div>
+      `;
+
+    } catch (error) {
+      console.error("Simple Chores Card: Error loading history:", error);
+      historyContainer.innerHTML = `
+        <div class="history-error">
+          <p><strong>Error loading completion history.</strong></p>
+          <p>This feature requires the Simple Chores integration to store completion history.</p>
+          <p><em>Try completing a chore first, then check back here.</em></p>
+        </div>
+      `;
+    }
   }
 
   static get styles() {
@@ -1143,7 +1384,7 @@ class SimpleChoresCard extends LitElement {
         flex-wrap: wrap;
       }
       
-      .add-room-btn, .add-chore-btn, .manage-rooms-btn {
+      .add-room-btn, .add-chore-btn, .manage-rooms-btn, .history-btn {
         background: rgba(255, 255, 255, 0.2);
         border: none;
         border-radius: 50%;
@@ -1157,7 +1398,7 @@ class SimpleChoresCard extends LitElement {
         transition: background-color 0.2s;
       }
       
-      .add-room-btn:hover, .add-chore-btn:hover, .manage-rooms-btn:hover {
+      .add-room-btn:hover, .add-chore-btn:hover, .manage-rooms-btn:hover, .history-btn:hover {
         background: rgba(255, 255, 255, 0.3);
       }
       
@@ -1321,6 +1562,34 @@ class SimpleChoresCard extends LitElement {
         font-size: 0.9em;
       }
       
+      .action-btn {
+        padding: 8px 12px;
+        border: 1px solid var(--divider-color);
+        border-radius: 4px;
+        background: var(--card-background-color);
+        color: var(--primary-text-color);
+        font-size: 0.85em;
+        cursor: pointer;
+        transition: all 0.2s;
+        white-space: nowrap;
+      }
+      
+      .action-btn:hover {
+        background: var(--secondary-background-color);
+        border-color: var(--primary-color);
+      }
+      
+      .action-btn.complete-btn {
+        background: var(--success-color);
+        color: white;
+        border-color: var(--success-color);
+      }
+      
+      .action-btn.complete-btn:hover {
+        background: var(--success-color);
+        opacity: 0.9;
+      }
+      
       .complete-btn {
         --mdc-theme-primary: var(--success-color);
       }
@@ -1376,6 +1645,76 @@ class SimpleChoresCard extends LitElement {
         gap: 12px;
         max-height: 60vh;
         overflow-y: auto;
+      }
+      
+      /* History Styles */
+      .history-loading {
+        text-align: center;
+        padding: 20px;
+      }
+      
+      .history-header h4 {
+        margin: 0 0 16px 0;
+        color: var(--primary-text-color);
+        border-bottom: 2px solid var(--primary-color);
+        padding-bottom: 8px;
+      }
+      
+      .history-list {
+        max-height: 50vh;
+        overflow-y: auto;
+      }
+      
+      .history-item {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--divider-color);
+        transition: background-color 0.2s;
+      }
+      
+      .history-item:hover {
+        background-color: rgba(var(--primary-color-rgb), 0.05);
+      }
+      
+      .history-item:last-child {
+        border-bottom: none;
+      }
+      
+      .history-info {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      
+      .history-chore-name {
+        font-weight: 500;
+        color: var(--primary-text-color);
+      }
+      
+      .history-separator {
+        color: var(--secondary-text-color);
+        font-weight: bold;
+      }
+      
+      .history-completed-by {
+        color: var(--secondary-text-color);
+        font-size: 0.9em;
+      }
+      
+      .history-completed-at {
+        color: var(--accent-color);
+        font-size: 0.85em;
+        font-style: italic;
+      }
+      
+      .no-history, .history-error {
+        text-align: center;
+        padding: 32px;
+        color: var(--secondary-text-color);
+      }
+      
+      .no-history p, .history-error p {
+        margin: 8px 0;
       }
       
       .modal-header {
