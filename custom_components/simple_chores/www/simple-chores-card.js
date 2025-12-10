@@ -58,6 +58,11 @@ class SimpleChoresCard extends LitElement {
       _newChoreRoom: { type: String },
       _newChoreFrequency: { type: String },
       _newChoreDueDate: { type: String },
+      _showEditChoreModal: { type: Boolean },
+      _editChoreId: { type: String },
+      _editChoreName: { type: String },
+      _editChoreRoom: { type: String },
+      _editChoreFrequency: { type: String },
     };
   }
 
@@ -73,6 +78,11 @@ class SimpleChoresCard extends LitElement {
     this._newChoreRoom = "";
     this._newChoreFrequency = "daily";
     this._newChoreDueDate = "";
+    this._showEditChoreModal = false;
+    this._editChoreId = "";
+    this._editChoreName = "";
+    this._editChoreRoom = "";
+    this._editChoreFrequency = "daily";
   }
 
   static getStubConfig() {
@@ -140,6 +150,7 @@ class SimpleChoresCard extends LitElement {
         ${this._renderAddRoomModal()}
         ${this._renderManageRoomsModal()}
         ${this._renderAddChoreModal()}
+        ${this._renderEditChoreModal()}
       </ha-card>
     `;
   }
@@ -200,6 +211,14 @@ class SimpleChoresCard extends LitElement {
           <span class="chore-due">Due: ${this._formatDate(dueDate)}</span>
         </div>
         <div class="chore-actions">
+          <mwc-button 
+            @click=${() => this._editChore(chore)}
+            outlined
+            class="edit-btn"
+            title="Edit Chore"
+          >
+            ✏️ Edit
+          </mwc-button>
           <mwc-button 
             @click=${() => this._completeChore(chore.id)}
             class="complete-btn"
@@ -729,6 +748,132 @@ class SimpleChoresCard extends LitElement {
             <button class="submit-btn" @click=${this._submitAddChore} 
                     ?disabled=${!this._newChoreName.trim() || !this._newChoreRoom.trim()}>
               Create Chore
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _editChore(chore) {
+    // Open edit modal with chore data
+    this._showEditChoreModal = true;
+    this._editChoreId = chore.id;
+    this._editChoreName = chore.name;
+    
+    // Handle different property names for room_id
+    this._editChoreRoom = chore.room_id || chore.room || "";
+    this._editChoreFrequency = chore.frequency || "daily";
+  }
+
+  _closeEditChoreModal() {
+    this._showEditChoreModal = false;
+    this._editChoreId = "";
+    this._editChoreName = "";
+    this._editChoreRoom = "";
+    this._editChoreFrequency = "daily";
+  }
+
+  _handleEditChoreNameInput(e) {
+    this._editChoreName = e.target.value;
+  }
+
+  _handleEditChoreRoomInput(e) {
+    this._editChoreRoom = e.target.value;
+  }
+
+  _handleEditChoreFrequencyInput(e) {
+    this._editChoreFrequency = e.target.value;
+  }
+
+  _submitEditChore() {
+    if (!this._editChoreName.trim()) {
+      this._showToast("Chore name is required");
+      return;
+    }
+
+    if (!this._editChoreRoom.trim()) {
+      this._showToast("Please select a room");
+      return;
+    }
+
+    this.hass.callService("simple_chores", "update_chore", {
+      chore_id: this._editChoreId,
+      name: this._editChoreName.trim(),
+      room_id: this._editChoreRoom,
+      frequency: this._editChoreFrequency
+    }).then(() => {
+      this._showToast(`Chore "${this._editChoreName}" updated successfully!`);
+      this._closeEditChoreModal();
+      this.requestUpdate();
+    }).catch(error => {
+      this._showToast(`Error updating chore: ${error.message}`);
+    });
+  }
+
+  _renderEditChoreModal() {
+    if (!this._showEditChoreModal) {
+      return html``;
+    }
+
+    const rooms = this._getRooms();
+
+    return html`
+      <div class="modal-overlay" @click=${this._closeEditChoreModal}>
+        <div class="modal-content" @click=${(e) => e.stopPropagation()}>
+          <div class="modal-header">
+            <h3>Edit Chore</h3>
+            <button class="close-btn" @click=${this._closeEditChoreModal}>
+              <ha-icon icon="mdi:close"></ha-icon>
+            </button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label for="edit-chore-name">Chore Name *</label>
+              <input 
+                id="edit-chore-name"
+                type="text" 
+                .value=${this._editChoreName}
+                @input=${this._handleEditChoreNameInput}
+                placeholder="Enter chore name..."
+                maxlength="100"
+              />
+            </div>
+            <div class="form-group">
+              <label for="edit-chore-room">Room *</label>
+              <select 
+                id="edit-chore-room"
+                .value=${this._editChoreRoom}
+                @change=${this._handleEditChoreRoomInput}
+              >
+                <option value="">Select a room...</option>
+                ${rooms.map(room => html`
+                  <option value=${room.id} ?selected=${this._editChoreRoom === room.id}>
+                    ${room.name}
+                  </option>
+                `)}
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="edit-chore-frequency">Frequency *</label>
+              <select 
+                id="edit-chore-frequency"
+                .value=${this._editChoreFrequency}
+                @change=${this._handleEditChoreFrequencyInput}
+              >
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+                <option value="quarterly">Quarterly</option>
+                <option value="yearly">Yearly</option>
+              </select>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="cancel-btn" @click=${this._closeEditChoreModal}>Cancel</button>
+            <button class="submit-btn" @click=${this._submitEditChore} 
+                    ?disabled=${!this._editChoreName.trim() || !this._editChoreRoom.trim()}>
+              Update Chore
             </button>
           </div>
         </div>
