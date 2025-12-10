@@ -48,7 +48,7 @@ class HouseholdTasksBaseSensor(CoordinatorEntity[HouseholdTasksCoordinator], Sen
     """Base class for Household Tasks sensors."""
 
     _attr_has_entity_name = True
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_state_class = SensorStateClass.TOTAL
 
     def __init__(
         self,
@@ -68,8 +68,6 @@ class HouseholdTasksBaseSensor(CoordinatorEntity[HouseholdTasksCoordinator], Sen
 
 class HouseholdTasksDueTodaySensor(HouseholdTasksBaseSensor):
     """Sensor showing number of chores due today."""
-
-    _attr_native_unit_of_measurement = "chores"
 
     def __init__(
         self, coordinator: HouseholdTasksCoordinator, entry: ConfigEntry
@@ -112,8 +110,6 @@ class HouseholdTasksDueTodaySensor(HouseholdTasksBaseSensor):
 
 class HouseholdTasksDueThisWeekSensor(HouseholdTasksBaseSensor):
     """Sensor showing number of chores due this week."""
-
-    _attr_native_unit_of_measurement = "chores"
 
     def __init__(
         self, coordinator: HouseholdTasksCoordinator, entry: ConfigEntry
@@ -159,8 +155,6 @@ class HouseholdTasksDueThisWeekSensor(HouseholdTasksBaseSensor):
 class HouseholdTasksOverdueSensor(HouseholdTasksBaseSensor):
     """Sensor showing number of overdue chores."""
 
-    _attr_native_unit_of_measurement = "chores"
-
     def __init__(
         self, coordinator: HouseholdTasksCoordinator, entry: ConfigEntry
     ) -> None:
@@ -202,8 +196,6 @@ class HouseholdTasksOverdueSensor(HouseholdTasksBaseSensor):
 
 class HouseholdTasksTotalSensor(HouseholdTasksBaseSensor):
     """Sensor showing total number of chores."""
-
-    _attr_native_unit_of_measurement = "chores"
 
     def __init__(
         self, coordinator: HouseholdTasksCoordinator, entry: ConfigEntry
