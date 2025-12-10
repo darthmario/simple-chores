@@ -221,8 +221,11 @@ class HouseholdTasksTotalSensor(HouseholdTasksBaseSensor):
     def native_value(self) -> int:
         """Return the total number of chores."""
         if self.coordinator.data is None:
+            _LOGGER.error("SIMPLE CHORES: Total sensor - coordinator.data is None!")
             return 0
-        return self.coordinator.data.get("total_chores", 0)
+        value = self.coordinator.data.get("total_chores", 0)
+        _LOGGER.error("SIMPLE CHORES: Total sensor returning value: %s", value)
+        return value
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
