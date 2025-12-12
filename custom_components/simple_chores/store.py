@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.helpers.storage import Store
 
+from .const import FREQUENCIES, MAX_ROOM_NAME_LENGTH, MAX_CHORE_NAME_LENGTH, MAX_HISTORY_ENTRIES
+
 from .const import STORAGE_KEY, STORAGE_VERSION
 
 if TYPE_CHECKING:
@@ -58,6 +60,12 @@ class HouseholdTasksStore:
     # Room operations
     def add_room(self, name: str, icon: str | None = None) -> dict[str, Any]:
         """Add a custom room."""
+        # Input validation
+        if not name or not name.strip():
+            raise ValueError("Room name cannot be empty")
+        if len(name.strip()) > MAX_ROOM_NAME_LENGTH:
+            raise ValueError(f"Room name too long (max {MAX_ROOM_NAME_LENGTH} characters)")
+        
         room_id = f"custom_{uuid.uuid4().hex[:8]}"
         room = {
             "id": room_id,
@@ -95,6 +103,16 @@ class HouseholdTasksStore:
         start_date: date | None = None,
     ) -> dict[str, Any]:
         """Add a new chore."""
+        # Input validation
+        if not name or not name.strip():
+            raise ValueError("Chore name cannot be empty")
+        if len(name.strip()) > MAX_CHORE_NAME_LENGTH:
+            raise ValueError(f"Chore name too long (max {MAX_CHORE_NAME_LENGTH} characters)")
+        if not room_id or not room_id.strip():
+            raise ValueError("Room ID cannot be empty")
+        if frequency not in FREQUENCIES:
+            raise ValueError(f"Invalid frequency: {frequency}. Must be one of: {FREQUENCIES}")
+        
         chore_id = uuid.uuid4().hex[:8]
         next_due = start_date or date.today()
         chore = {
@@ -169,9 +187,8 @@ class HouseholdTasksStore:
         }
         self._data["history"].append(history_entry)
 
-        # Keep history limited to last 1000 entries
-        if len(self._data["history"]) > 1000:
-            self._data["history"] = self._data["history"][-1000:]
+        # Always keep history limited to prevent memory bloat
+        self._data["history"] = self._data["history"][-MAX_HISTORY_ENTRIES:]
 
         return chore
 

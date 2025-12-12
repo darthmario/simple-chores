@@ -1,15 +1,15 @@
-# Household Tasks Card
+# Simple Chores Card
 
-A custom Lovelace card for the Household Tasks integration.
+A custom Lovelace card for the Simple Chores integration.
 
 ## Installation
 
-1. Copy `household-tasks-card.js` to your Home Assistant `www` folder
+1. Copy `simple-chores-card.js` to your Home Assistant `www` folder
 2. Add the resource in your Lovelace configuration:
 
 ```yaml
 resources:
-  - url: /local/household-tasks-card.js
+  - url: /local/simple-chores-card.js
     type: module
 ```
 
@@ -20,7 +20,7 @@ Or via UI: Settings → Dashboards → Resources → Add Resource
 Add the card to your dashboard:
 
 ```yaml
-type: custom:household-tasks-card
+type: custom:simple-chores-card
 show_completed: false
 default_room: all
 ```

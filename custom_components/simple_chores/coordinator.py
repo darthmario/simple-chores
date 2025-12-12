@@ -79,7 +79,8 @@ class HouseholdTasksCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         today = date.today()
         week_start, week_end = get_week_bounds(today)
 
-        # Get all rooms (HA Areas + custom)
+        # Get all rooms (HA Areas + custom) and clear cache
+        self._room_name_cache = None  # Clear cache to ensure fresh data
         all_rooms = await self._get_all_rooms()
         _LOGGER.debug("Available rooms: %s", [(room["id"], room["name"]) for room in all_rooms])
 
@@ -166,10 +167,10 @@ class HouseholdTasksCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self, room_id: str, all_rooms: list[dict[str, Any]]
     ) -> str:
         """Get the display name for a room."""
-        for room in all_rooms:
-            if room["id"] == room_id:
-                return room["name"]
-        return "Unknown Room"
+        # Create efficient lookup cache if not already cached
+        if not hasattr(self, '_room_name_cache') or self._room_name_cache is None:
+            self._room_name_cache = {room["id"]: room["name"] for room in all_rooms}
+        return self._room_name_cache.get(room_id, "Unknown Room")
 
     async def async_get_users(self) -> list[dict[str, Any]]:
         """Get all Home Assistant users."""

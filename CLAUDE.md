@@ -16,7 +16,7 @@ Since this is a Home Assistant custom integration (Python-based), there are no b
    cp -r custom_components/simple_chores /path/to/homeassistant/config/custom_components/
    
    # Copy Lovelace card to www folder
-   cp household-tasks-card/household-tasks-card.js /path/to/homeassistant/config/www/
+   cp custom_components/simple_chores/www/simple-chores-card.js /path/to/homeassistant/config/www/
    
    # Restart Home Assistant and add integration via UI
    ```
@@ -101,8 +101,8 @@ custom_components/simple_chores/
 ├── strings.json       # UI strings
 └── translations/      # Localization files
 
-household-tasks-card/
-└── household-tasks-card.js  # Custom Lovelace card
+custom_components/simple_chores/www/
+└── simple-chores-card.js  # Custom Lovelace card
 ```
 
 The integration follows Home Assistant patterns with proper async handling, storage management, and entity lifecycle.

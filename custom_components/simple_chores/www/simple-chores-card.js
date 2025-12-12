@@ -206,33 +206,6 @@ class SimpleChoresCard extends LitElement {
     `;
   }
 
-  _formatDate(dateString) {
-    if (!dateString) return "No Date";
-    
-    try {
-      const date = new Date(dateString);
-      if (isNaN(date.getTime())) return "Invalid Date";
-      
-      const today = new Date();
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      
-      // Reset time parts for comparison
-      const targetDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-      const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-      const tomorrowDate = new Date(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate());
-      
-      if (targetDate.getTime() === todayDate.getTime()) {
-        return "Today";
-      } else if (targetDate.getTime() === tomorrowDate.getTime()) {
-        return "Tomorrow";
-      } else {
-        return date.toLocaleDateString();
-      }
-    } catch (e) {
-      return "Invalid Date";
-    }
-  }
 
   _renderChore(chore) {
     console.debug("Simple Chores Card: Rendering chore:", chore);

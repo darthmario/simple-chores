@@ -125,26 +125,38 @@ class HouseholdTasksCalendar(
         frequency = chore["frequency"]
 
         # Start from the chore's next due date
-        current_due = date.fromisoformat(chore["next_due"])
+        try:
+            current_due = date.fromisoformat(chore["next_due"])
+        except ValueError:
+            _LOGGER.warning("Invalid date format for chore %s: %s", chore["id"], chore["next_due"])
+            continue
 
         # If the due date is before our start, advance it until it's within range
         while current_due < start:
-            current_due = calculate_next_due(current_due, frequency)
+            try:
+                current_due = calculate_next_due(current_due, frequency)
+            except Exception as e:
+                _LOGGER.error("Error calculating next due date for chore %s: %s", chore["id"], e)
+                break
 
         # Generate events until we pass the end date
         # Limit to 100 events to prevent infinite loops
         count = 0
         while current_due <= end and count < 100:
-            events.append(
-                CalendarEvent(
-                    start=current_due,
-                    end=current_due + timedelta(days=1),
-                    summary=chore["name"],
-                    description=f"Room: {room_name}\nFrequency: {frequency}",
-                    uid=f"{chore['id']}_{current_due.isoformat()}",
+            try:
+                events.append(
+                    CalendarEvent(
+                        start=current_due,
+                        end=current_due + timedelta(days=1),
+                        summary=chore["name"],
+                        description=f"Room: {room_name}\nFrequency: {frequency}",
+                        uid=f"{chore['id']}_{current_due.isoformat()}",
+                    )
                 )
-            )
-            current_due = calculate_next_due(current_due, frequency)
-            count += 1
+                current_due = calculate_next_due(current_due, frequency)
+                count += 1
+            except Exception as e:
+                _LOGGER.error("Error generating calendar event for chore %s: %s", chore["id"], e)
+                break
 
         return events
