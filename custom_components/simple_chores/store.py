@@ -18,8 +18,8 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
-class HouseholdTasksStore:
-    """Class to manage persistent storage for household tasks."""
+class SimpleChoresStore:
+    """Class to manage persistent storage for simple chores."""
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize the store."""

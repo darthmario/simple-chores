@@ -19,7 +19,7 @@ from .const import (
     FREQUENCY_YEARLY,
     ROOM_PREFIX_AREA,
 )
-from .store import HouseholdTasksStore
+from .store import SimpleChoresStore
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -53,15 +53,15 @@ def get_week_bounds(for_date: date) -> tuple[date, date]:
     return week_start, week_end
 
 
-class HouseholdTasksCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Coordinator to manage household tasks data."""
+class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+    """Coordinator to manage simple chores data."""
 
     config_entry: ConfigEntry
 
     def __init__(
         self,
         hass: HomeAssistant,
-        store: HouseholdTasksStore,
+        store: SimpleChoresStore,
         config_entry: ConfigEntry,
     ) -> None:
         """Initialize the coordinator."""

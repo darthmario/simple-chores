@@ -1,4 +1,4 @@
-"""Binary sensor platform for Household Tasks integration."""
+"""Binary sensor platform for Simple Chores integration."""
 from __future__ import annotations
 
 import logging
@@ -14,7 +14,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
-from .coordinator import HouseholdTasksCoordinator
+from .coordinator import SimpleChoresCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,13 +25,13 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Simple Chores binary sensors from a config entry."""
-    coordinator: HouseholdTasksCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: SimpleChoresCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    async_add_entities([HouseholdTasksHasOverdueSensor(coordinator, entry)])
+    async_add_entities([SimpleChoresHasOverdueSensor(coordinator, entry)])
 
 
-class HouseholdTasksHasOverdueSensor(
-    CoordinatorEntity[HouseholdTasksCoordinator], BinarySensorEntity
+class SimpleChoresHasOverdueSensor(
+    CoordinatorEntity[SimpleChoresCoordinator], BinarySensorEntity
 ):
     """Binary sensor indicating if there are overdue chores."""
 
@@ -39,7 +39,7 @@ class HouseholdTasksHasOverdueSensor(
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
 
     def __init__(
-        self, coordinator: HouseholdTasksCoordinator, entry: ConfigEntry
+        self, coordinator: SimpleChoresCoordinator, entry: ConfigEntry
     ) -> None:
         """Initialize the binary sensor."""
         super().__init__(coordinator)

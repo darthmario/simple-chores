@@ -1,4 +1,4 @@
-"""Sensor platform for Household Tasks integration."""
+"""Sensor platform for Simple Chores integration."""
 from __future__ import annotations
 
 import logging
@@ -11,7 +11,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
-from .coordinator import HouseholdTasksCoordinator
+from .coordinator import SimpleChoresCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,27 +22,27 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Simple Chores sensors from a config entry."""
-    coordinator: HouseholdTasksCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: SimpleChoresCoordinator = hass.data[DOMAIN][entry.entry_id]
 
     entities: list[SensorEntity] = [
-        HouseholdTasksDueTodaySensor(coordinator, entry),
-        HouseholdTasksDueThisWeekSensor(coordinator, entry),
-        HouseholdTasksOverdueSensor(coordinator, entry),
-        HouseholdTasksTotalSensor(coordinator, entry),
+        SimpleChoresDueTodaySensor(coordinator, entry),
+        SimpleChoresDueThisWeekSensor(coordinator, entry),
+        SimpleChoresOverdueSensor(coordinator, entry),
+        SimpleChoresTotalSensor(coordinator, entry),
     ]
 
     async_add_entities(entities)
 
 
-class HouseholdTasksBaseSensor(CoordinatorEntity[HouseholdTasksCoordinator], SensorEntity):
-    """Base class for Household Tasks sensors."""
+class SimpleChoresBaseSensor(CoordinatorEntity[SimpleChoresCoordinator], SensorEntity):
+    """Base class for Simple Chores sensors."""
 
     _attr_has_entity_name = True
     _attr_state_class = SensorStateClass.TOTAL
 
     def __init__(
         self,
-        coordinator: HouseholdTasksCoordinator,
+        coordinator: SimpleChoresCoordinator,
         entry: ConfigEntry,
         key: str,
         name: str,
@@ -56,11 +56,11 @@ class HouseholdTasksBaseSensor(CoordinatorEntity[HouseholdTasksCoordinator], Sen
         self._key = key
 
 
-class HouseholdTasksDueTodaySensor(HouseholdTasksBaseSensor):
+class SimpleChoresDueTodaySensor(SimpleChoresBaseSensor):
     """Sensor showing number of chores due today."""
 
     def __init__(
-        self, coordinator: HouseholdTasksCoordinator, entry: ConfigEntry
+        self, coordinator: SimpleChoresCoordinator, entry: ConfigEntry
     ) -> None:
         """Initialize the sensor."""
         super().__init__(
@@ -98,11 +98,11 @@ class HouseholdTasksDueTodaySensor(HouseholdTasksBaseSensor):
         }
 
 
-class HouseholdTasksDueThisWeekSensor(HouseholdTasksBaseSensor):
+class SimpleChoresDueThisWeekSensor(SimpleChoresBaseSensor):
     """Sensor showing number of chores due this week."""
 
     def __init__(
-        self, coordinator: HouseholdTasksCoordinator, entry: ConfigEntry
+        self, coordinator: SimpleChoresCoordinator, entry: ConfigEntry
     ) -> None:
         """Initialize the sensor."""
         super().__init__(
@@ -142,11 +142,11 @@ class HouseholdTasksDueThisWeekSensor(HouseholdTasksBaseSensor):
         }
 
 
-class HouseholdTasksOverdueSensor(HouseholdTasksBaseSensor):
+class SimpleChoresOverdueSensor(SimpleChoresBaseSensor):
     """Sensor showing number of overdue chores."""
 
     def __init__(
-        self, coordinator: HouseholdTasksCoordinator, entry: ConfigEntry
+        self, coordinator: SimpleChoresCoordinator, entry: ConfigEntry
     ) -> None:
         """Initialize the sensor."""
         super().__init__(
@@ -184,11 +184,11 @@ class HouseholdTasksOverdueSensor(HouseholdTasksBaseSensor):
         }
 
 
-class HouseholdTasksTotalSensor(HouseholdTasksBaseSensor):
+class SimpleChoresTotalSensor(SimpleChoresBaseSensor):
     """Sensor showing total number of chores."""
 
     def __init__(
-        self, coordinator: HouseholdTasksCoordinator, entry: ConfigEntry
+        self, coordinator: SimpleChoresCoordinator, entry: ConfigEntry
     ) -> None:
         """Initialize the sensor."""
         super().__init__(

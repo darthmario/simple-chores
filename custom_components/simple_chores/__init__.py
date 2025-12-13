@@ -1,7 +1,11 @@
 """The Simple Chores integration."""
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+import os
+import shutil
 from datetime import date, datetime, time, timedelta
 from typing import Any
 
@@ -12,6 +16,14 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_time_change
+
+# Conditional imports for frontend resource registration
+try:
+    from aiohttp import web
+    from homeassistant.components.http.static import CachingStaticResource
+except ImportError:
+    web = None
+    CachingStaticResource = None
 
 from .const import (
     ATTR_CHORE_ID,
@@ -42,8 +54,8 @@ from .const import (
     SERVICE_UPDATE_CHORE,
     SERVICE_UPDATE_ROOM,
 )
-from .coordinator import HouseholdTasksCoordinator
-from .store import HouseholdTasksStore
+from .coordinator import SimpleChoresCoordinator
+from .store import SimpleChoresStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -127,11 +139,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     try:
         # Initialize store and load data
-        store = HouseholdTasksStore(hass)
+        store = SimpleChoresStore(hass)
         await store.async_load()
 
         # Create coordinator
-        coordinator = HouseholdTasksCoordinator(hass, store, entry)
+        coordinator = SimpleChoresCoordinator(hass, store, entry)
         await coordinator.async_config_entry_first_refresh()
 
         hass.data[DOMAIN][entry.entry_id] = coordinator
@@ -171,7 +183,7 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
 
 async def _async_setup_services(
-    hass: HomeAssistant, coordinator: HouseholdTasksCoordinator
+    hass: HomeAssistant, coordinator: SimpleChoresCoordinator
 ) -> None:
     """Set up services for the integration."""
 
@@ -286,7 +298,7 @@ async def _async_setup_services(
 async def _async_setup_notification_scheduler(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    coordinator: HouseholdTasksCoordinator,
+    coordinator: SimpleChoresCoordinator,
 ) -> None:
     """Set up the daily notification scheduler."""
 
@@ -321,7 +333,7 @@ async def _async_setup_notification_scheduler(
 async def _async_check_and_notify(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    coordinator: HouseholdTasksCoordinator,
+    coordinator: SimpleChoresCoordinator,
 ) -> None:
     """Check for due chores and send notification if enabled."""
     if not entry.options.get(CONF_NOTIFICATIONS_ENABLED, DEFAULT_NOTIFICATIONS_ENABLED):
@@ -332,7 +344,7 @@ async def _async_check_and_notify(
 
 async def _async_send_due_notification(
     hass: HomeAssistant,
-    coordinator: HouseholdTasksCoordinator,
+    coordinator: SimpleChoresCoordinator,
     entry: ConfigEntry | None = None,
 ) -> None:
     """Send notification about chores due today."""
@@ -369,10 +381,10 @@ async def _async_send_due_notification(
                 "notify",
                 target,
                 {
-                    "title": "Household Tasks Due Today",
+                    "title": "Simple Chores Due Today",
                     "message": message,
                     "data": {
-                        "tag": "household_tasks_due",
+                        "tag": "simple_chores_due",
                         "actions": [
                             {
                                 "action": "OPEN_APP",
@@ -389,7 +401,6 @@ async def _async_send_due_notification(
 async def _async_register_frontend_resources(hass: HomeAssistant) -> None:
     """Register frontend resources for the Lovelace card."""
     try:
-        import os
         
         # Check if files exist first
         www_path = hass.config.path(f"custom_components/{DOMAIN}/www")
@@ -416,8 +427,7 @@ async def _async_register_frontend_resources(hass: HomeAssistant) -> None:
         # Method 2: Alternative approach for older versions
         if not registered:
             try:
-                from aiohttp import web
-                from homeassistant.components.http.static import CachingStaticResource
+                # aiohttp and CachingStaticResource imports moved to top
                 
                 # Add static route directly
                 hass.http.app.router.add_static(
@@ -433,14 +443,12 @@ async def _async_register_frontend_resources(hass: HomeAssistant) -> None:
         # Method 3: HACS community folder approach (ALWAYS try this for HACS compatibility)
         try:
             from homeassistant.components.frontend import add_extra_js_url
-            import asyncio
             
             # Copy the file to HACS community directory structure
             community_dir = hass.config.path("www/community/simple-chores")
             
             # Use async file operations to avoid blocking
             def _copy_file():
-                import shutil
                 if not os.path.exists(community_dir):
                     os.makedirs(community_dir)
                 target_file = os.path.join(community_dir, "simple-chores-card.js")
@@ -553,8 +561,6 @@ async def _async_auto_register_lovelace_resource(hass: HomeAssistant, url: str) 
     
     try:
         # Method 3: Direct file modification approach (async)
-        import json
-        import os
         
         # Try to modify .storage/lovelace_resources directly (careful approach)
         storage_path = hass.config.path(".storage/lovelace_resources")

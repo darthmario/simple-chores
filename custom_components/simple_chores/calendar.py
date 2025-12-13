@@ -1,4 +1,4 @@
-"""Calendar platform for Household Tasks integration."""
+"""Calendar platform for Simple Chores integration."""
 from __future__ import annotations
 
 import logging
@@ -13,7 +13,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .coordinator import HouseholdTasksCoordinator, calculate_next_due
+from .coordinator import SimpleChoresCoordinator, calculate_next_due
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,25 +24,25 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Simple Chores calendar from a config entry."""
-    coordinator: HouseholdTasksCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: SimpleChoresCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    async_add_entities([HouseholdTasksCalendar(coordinator, entry)])
+    async_add_entities([SimpleChoresCalendar(coordinator, entry)])
 
 
-class HouseholdTasksCalendar(
-    CoordinatorEntity[HouseholdTasksCoordinator], CalendarEntity
+class SimpleChoresCalendar(
+    CoordinatorEntity[SimpleChoresCoordinator], CalendarEntity
 ):
-    """Calendar entity for Household Tasks."""
+    """Calendar entity for Simple Chores."""
 
     _attr_has_entity_name = True
 
     def __init__(
-        self, coordinator: HouseholdTasksCoordinator, entry: ConfigEntry
+        self, coordinator: SimpleChoresCoordinator, entry: ConfigEntry
     ) -> None:
         """Initialize the calendar."""
         super().__init__(coordinator)
         self._attr_unique_id = f"{entry.entry_id}_calendar"
-        self._attr_name = "Household Tasks"
+        self._attr_name = "Simple Chores"
         self._attr_icon = "mdi:calendar-check"
 
     @property
@@ -129,7 +129,7 @@ class HouseholdTasksCalendar(
             current_due = date.fromisoformat(chore["next_due"])
         except ValueError:
             _LOGGER.warning("Invalid date format for chore %s: %s", chore["id"], chore["next_due"])
-            continue
+            return []
 
         # If the due date is before our start, advance it until it's within range
         while current_due < start:
