@@ -90,7 +90,11 @@ class SimpleChoresDueTodaySensor(SimpleChoresBaseSensor):
                     "id": c["id"],
                     "name": c["name"],
                     "room": c.get("room_name", "Unknown"),
+                    "room_id": c.get("room_id"),
                     "frequency": c["frequency"],
+                    "assigned_to": c.get("assigned_to"),
+                    "next_due": c.get("next_due"),
+                    "due_date": c.get("next_due"),
                 }
                 for c in chores
             ],
@@ -132,8 +136,11 @@ class SimpleChoresDueThisWeekSensor(SimpleChoresBaseSensor):
                     "id": c["id"],
                     "name": c["name"],
                     "room": c.get("room_name", "Unknown"),
+                    "room_id": c.get("room_id"),
                     "frequency": c["frequency"],
                     "due_date": c["next_due"],
+                    "next_due": c.get("next_due"),
+                    "assigned_to": c.get("assigned_to"),
                 }
                 for c in chores
             ],
