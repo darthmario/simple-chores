@@ -151,8 +151,11 @@ class SimpleChoresStore:
             chore["frequency"] = frequency
         if next_due is not None:
             chore["next_due"] = next_due.isoformat()
-        if assigned_to is not None:
-            chore["assigned_to"] = assigned_to
+        # Ensure assigned_to field exists for backwards compatibility
+        if "assigned_to" not in chore:
+            chore["assigned_to"] = None
+        # Update assigned_to field (always set it when updating a chore)
+        chore["assigned_to"] = assigned_to
         return chore
 
     def remove_chore(self, chore_id: str) -> bool:

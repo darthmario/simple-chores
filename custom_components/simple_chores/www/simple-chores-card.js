@@ -995,11 +995,24 @@ class SimpleChoresCard extends LitElement {
   _editChore(chore) {
     console.debug("Simple Chores Card: Editing chore:", chore);
     
+    // Handle room ID properly - some might be room names instead of IDs
+    let roomId = chore.room_id || chore.room || "";
+    const rooms = this._getRooms();
+    
+    // If room_id looks like a name, try to find the actual ID
+    if (roomId && !rooms.find(r => r.id === roomId)) {
+      const roomByName = rooms.find(r => r.name === roomId);
+      if (roomByName) {
+        roomId = roomByName.id;
+        console.debug("Simple Chores Card: Mapped room name to ID:", roomId);
+      }
+    }
+    
     // Open edit modal with chore data
     this._formData.chore = {
       id: chore.id,
       name: chore.name,
-      room: chore.room_id || chore.room || "",
+      room: roomId,
       frequency: chore.frequency || "daily",
       dueDate: chore.next_due || chore.due_date || "",
       assignedTo: chore.assigned_to || ""
@@ -1306,11 +1319,24 @@ class SimpleChoresCard extends LitElement {
   _editChoreFromModal(chore) {
     console.log("Simple Chores Card: Edit chore from modal:", chore);
     
+    // Handle room ID properly - some might be room names instead of IDs
+    let roomId = chore.room_id || chore.room || "";
+    const rooms = this._getRooms();
+    
+    // If room_id looks like a name, try to find the actual ID
+    if (roomId && !rooms.find(r => r.id === roomId)) {
+      const roomByName = rooms.find(r => r.name === roomId);
+      if (roomByName) {
+        roomId = roomByName.id;
+        console.log("Simple Chores Card: Mapped room name to ID:", roomId);
+      }
+    }
+    
     // First populate the edit modal data
     this._formData.chore = {
       id: chore.id,
       name: chore.name,
-      room: chore.room_id || chore.room || "",
+      room: roomId,
       frequency: chore.frequency || "daily",
       dueDate: chore.next_due || chore.due_date || "",
       assignedTo: chore.assigned_to || ""
