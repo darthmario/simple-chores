@@ -93,6 +93,13 @@ add_chore:
       required: false
       selector:
         date:
+    assigned_to:
+      name: Assigned To
+      description: User ID to assign this chore to (optional).
+      required: false
+      example: "user-uuid"
+      selector:
+        text:
 
 remove_chore:
   name: Remove Chore
@@ -150,6 +157,13 @@ update_chore:
       required: false
       selector:
         date:
+    assigned_to:
+      name: Assigned To
+      description: User ID to assign this chore to (use null to unassign).
+      required: false
+      example: "user-uuid"
+      selector:
+        text:
 
 complete_chore:
   name: Complete Chore

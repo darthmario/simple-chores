@@ -12,7 +12,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
+from .const import DOMAIN, MAX_CALENDAR_EVENTS
 from .coordinator import SimpleChoresCoordinator, calculate_next_due
 
 _LOGGER = logging.getLogger(__name__)
@@ -140,9 +140,9 @@ class SimpleChoresCalendar(
                 break
 
         # Generate events until we pass the end date
-        # Limit to 100 events to prevent infinite loops
+        # Limit events to prevent infinite loops
         count = 0
-        while current_due <= end and count < 100:
+        while current_due <= end and count < MAX_CALENDAR_EVENTS:
             try:
                 events.append(
                     CalendarEvent(

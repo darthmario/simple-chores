@@ -64,6 +64,8 @@ class SimpleChoresCard extends LitElement {
       _formData: { type: Object },
       // History data cache
       _historyData: { type: Array },
+      // Chore display limits for progressive rendering
+      _choreLimits: { type: Object },
     };
   }
 
@@ -86,6 +88,11 @@ class SimpleChoresCard extends LitElement {
     this._initializeFormData();
     // History data cache
     this._historyData = [];
+    // Chore display limits for progressive rendering
+    this._choreLimits = {
+      dueToday: 20,
+      dueNext7Days: 20
+    };
     // Performance caching
     this._cache = {
       rooms: { data: null, lastUpdate: 0, ttl: 30000 }, // 30 second TTL
@@ -124,11 +131,8 @@ class SimpleChoresCard extends LitElement {
     }
     this._formData[formType][field] = value;
     
-    // Debug assignment handling
-    if (field === 'assignedTo') {
-      console.log('Simple Chores Card: Assignment changed to:', value);
-      console.log('Simple Chores Card: Full form data:', this._formData);
-    }
+    // Assignment handling
+    // Debug logging removed for production
     
     this.requestUpdate();
   }
@@ -347,12 +351,13 @@ class SimpleChoresCard extends LitElement {
 
   _renderChoreList(chores, title) {
     const filteredChores = this._filterChoresByRoom(chores);
-    
+
     // Performance optimization: limit initial render for large lists
-    const maxInitialRender = 20;
-    const choresToRender = filteredChores.slice(0, maxInitialRender);
-    const hasMore = filteredChores.length > maxInitialRender;
-    
+    const limitKey = title.includes('Today') ? 'dueToday' : 'dueNext7Days';
+    const currentLimit = this._choreLimits[limitKey];
+    const choresToRender = filteredChores.slice(0, currentLimit);
+    const hasMore = filteredChores.length > currentLimit;
+
     return html`
       <div class="section">
         <h3>${title} (${filteredChores.length})</h3>
@@ -362,8 +367,8 @@ class SimpleChoresCard extends LitElement {
           <div class="chore-list">
             ${choresToRender.map(chore => this._renderChore(chore))}
             ${hasMore ? html`
-              <button class="load-more-btn" @click=${() => this._loadMoreChores(title, filteredChores)}>
-                Load ${filteredChores.length - maxInitialRender} more chores...
+              <button class="load-more-btn" @click=${() => this._loadMoreChores(limitKey, filteredChores.length)}>
+                Load ${filteredChores.length - currentLimit} more chores...
               </button>
             ` : ''}
           </div>
@@ -374,8 +379,7 @@ class SimpleChoresCard extends LitElement {
 
 
   _renderChore(chore) {
-    console.debug("Simple Chores Card: Rendering chore:", chore);
-    
+
     // Handle different property names from different data sources
     let dueDate = chore.next_due || chore.due_date || chore.date;
     
@@ -453,7 +457,7 @@ class SimpleChoresCard extends LitElement {
     const chores = this.hass.states[sensorName]?.attributes?.chores || [];
     
     // Debug log to see what we're getting
-    console.log(`Simple Chores Card: ${sensorName} raw chores:`, chores);
+    // Debug logging removed
     
     // Process chores to ensure proper date formatting and properties
     const processedChores = chores.map(chore => {
@@ -476,7 +480,7 @@ class SimpleChoresCard extends LitElement {
       }
       
       // Debug log for each chore
-      console.log(`Simple Chores Card: Processed chore from ${sensorName}:`, processedChore);
+      // Debug logging removed
       
       return processedChore;
     });
@@ -555,25 +559,23 @@ class SimpleChoresCard extends LitElement {
       key.startsWith('sensor.') && (key.includes('chores') || key.includes('overdue'))
     );
     
-    console.log("Simple Chores Card: simple_chores sensors:", simpleChoreSensors);
-    console.log("Simple Chores Card: household_tasks sensors:", householdTaskSensors);
-    console.log("Simple Chores Card: all chores sensors:", choresSensors);
+    // Debug logging removed
     
     // Debug: Check if we have ANY entities from this integration
     const allHouseholdEntities = Object.keys(this.hass.states).filter(key => 
       key.includes('household_tasks') || key.includes('simple_chores')
     );
-    console.log("Simple Chores Card: All integration entities:", allHouseholdEntities);
+    // Debug logging removed
     
     // Check if calendar has any room data
     const calendar = this.hass.states["calendar.household_tasks"];
-    console.log("Simple Chores Card: Calendar entity:", calendar);
+    // Debug logging removed
     if (calendar && calendar.attributes) {
-      console.log("Simple Chores Card: Calendar attributes:", calendar.attributes);
+    // Debug logging removed
       
       // Check if calendar has room data in attributes
       if (calendar.attributes.rooms) {
-        console.log("Simple Chores Card: Found rooms in calendar:", calendar.attributes.rooms);
+    // Debug logging removed
         rooms = calendar.attributes.rooms;
       }
     }
@@ -590,12 +592,12 @@ class SimpleChoresCard extends LitElement {
       
       for (const sensorName of possibleTotalSensors) {
         const sensor = this.hass.states[sensorName];
-        console.log(`Simple Chores Card: Checking ${sensorName}:`, sensor);
+    // Debug logging removed
         
         if (sensor) {
-          console.log(`Simple Chores Card: ${sensorName} attributes:`, sensor.attributes);
+    // Debug logging removed
           if (sensor.attributes && sensor.attributes.rooms) {
-            console.log(`Simple Chores Card: Found rooms in ${sensorName}:`, sensor.attributes.rooms);
+    // Debug logging removed
             rooms = sensor.attributes.rooms;
             break;
           }
@@ -607,9 +609,8 @@ class SimpleChoresCard extends LitElement {
         for (const sensorName of allSensors) {
           const sensor = this.hass.states[sensorName];
           if (sensor && sensor.attributes) {
-            console.log(`Simple Chores Card: ${sensorName} attributes:`, sensor.attributes);
             if (sensor.attributes.rooms) {
-              console.log(`Simple Chores Card: Found rooms in ${sensorName}:`, sensor.attributes.rooms);
+              // Found rooms in sensor
               rooms = sensor.attributes.rooms;
               break;
             }
@@ -620,14 +621,14 @@ class SimpleChoresCard extends LitElement {
     
     // Fallback: Get just Home Assistant areas if sensor data not available
     if (rooms.length === 0) {
-      console.log("Simple Chores Card: No rooms found in any sensor, falling back to HA areas");
+      // No rooms found in sensors, falling back to HA areas
       
       rooms = Object.values(this.hass.areas || {}).map(area => ({
         id: `area_${area.area_id}`,  // Match the coordinator's room ID format
         name: area.name || area.area_id
       }));
       
-      console.log("Simple Chores Card: HA areas fallback:", rooms);
+      // Using HA areas fallback
     }
     
     // Update cache
@@ -734,8 +735,8 @@ class SimpleChoresCard extends LitElement {
     const roomName = this._formData.room.name.trim();
     const existingRooms = this._getRooms();
     
-    console.log("Simple Chores Card: Current rooms:", existingRooms);
-    console.log("Simple Chores Card: Trying to create room:", roomName);
+    // Debug logging removed
+    // Debug logging removed
     
     const duplicateRoom = existingRooms.find(room => 
       room.name.toLowerCase() === roomName.toLowerCase()
@@ -746,16 +747,12 @@ class SimpleChoresCard extends LitElement {
       return;
     }
 
-    console.log("Simple Chores Card: Calling add_room service with:", {
-      name: roomName,
-      icon: this._formData.room.icon || "mdi:home"
-    });
-
+    // Call service to add room
     this.hass.callService("simple_chores", "add_room", {
       name: roomName,
       icon: this._formData.room.icon || "mdi:home"
     }).then((result) => {
-      console.log("Simple Chores Card: Service call succeeded:", result);
+    // Debug logging removed
       
       // Wait and check if the room data updates
       const checkForRoom = (attempts = 0) => {
@@ -765,10 +762,10 @@ class SimpleChoresCard extends LitElement {
             room.name.toLowerCase() === roomName.toLowerCase()
           );
           
-          console.log(`Simple Chores Card: Attempt ${attempts + 1} - Rooms count: ${roomsAfter.length}, Found new room:`, foundNewRoom);
+    // Debug logging removed
           
           if (foundNewRoom) {
-            console.log("Simple Chores Card: New room found in data!");
+    // Debug logging removed
             this._showToast(`Room "${roomName}" created successfully!`);
             this._closeAddRoomModal();
             this.requestUpdate();
@@ -1048,7 +1045,7 @@ class SimpleChoresCard extends LitElement {
   }
 
   _editChore(chore) {
-    console.debug("Simple Chores Card: Editing chore:", chore);
+    // Debug logging removed
     
     // Handle room ID properly - some might be room names instead of IDs
     let roomId = chore.room_id || chore.room || "";
@@ -1059,7 +1056,7 @@ class SimpleChoresCard extends LitElement {
       const roomByName = rooms.find(r => r.name === roomId);
       if (roomByName) {
         roomId = roomByName.id;
-        console.debug("Simple Chores Card: Mapped room name to ID:", roomId);
+    // Debug logging removed
       }
     }
     
@@ -1073,7 +1070,7 @@ class SimpleChoresCard extends LitElement {
       assignedTo: chore.assigned_to || ""
     };
     
-    console.debug("Simple Chores Card: Set edit data:", this._formData.chore);
+    // Debug logging removed
     
     // Show the modal and request update
     this._showEditChoreModal = true;
@@ -1086,13 +1083,13 @@ class SimpleChoresCard extends LitElement {
       
       if (roomSelect) {
         roomSelect.value = this._formData.chore.room;
-        console.debug("Simple Chores Card: Manually set room select value:", roomSelect.value);
+    // Debug logging removed
       }
       
       if (assignSelect) {
         assignSelect.value = this._formData.chore.assignedTo || "";
-        console.debug("Simple Chores Card: Manually set assignment select value:", assignSelect.value);
-        console.debug("Simple Chores Card: Available assignment options:", Array.from(assignSelect.options).map(o => ({value: o.value, text: o.text})));
+    // Debug logging removed
+    // Debug logging removed
       }
     }, 100);
   }
@@ -1256,17 +1253,17 @@ class SimpleChoresCard extends LitElement {
     const totalChoresSensor = this.hass.states["sensor.total_chores"];
     
     if (totalChoresSensor && totalChoresSensor.attributes && totalChoresSensor.attributes.chores) {
-      console.log("Simple Chores Card: Found all chores in sensor.total_chores:", totalChoresSensor.attributes.chores);
+    // Debug logging removed
       return totalChoresSensor.attributes.chores;
     }
     
     // Fallback: try the due chores if the sensor isn't available yet
-    console.log("Simple Chores Card: sensor.total_chores not available, using fallback...");
+    // Debug logging removed
     const dueToday = this._getDueChores("today");
     const dueThisWeek = this._getDueChores("week");
     
     const fallbackChores = [...dueToday, ...dueThisWeek];
-    console.log("Simple Chores Card: Using fallback chores:", fallbackChores.length);
+    // Debug logging removed
     
     return fallbackChores;
   }
@@ -1387,7 +1384,7 @@ class SimpleChoresCard extends LitElement {
 
   // Modal action methods that close the all chores modal before performing actions
   _editChoreFromModal(chore) {
-    console.log("Simple Chores Card: Edit chore from modal:", chore);
+    // Debug logging removed
     
     // Handle room ID properly - some might be room names instead of IDs
     let roomId = chore.room_id || chore.room || "";
@@ -1398,7 +1395,7 @@ class SimpleChoresCard extends LitElement {
       const roomByName = rooms.find(r => r.name === roomId);
       if (roomByName) {
         roomId = roomByName.id;
-        console.log("Simple Chores Card: Mapped room name to ID:", roomId);
+    // Debug logging removed
       }
     }
     
@@ -1412,7 +1409,7 @@ class SimpleChoresCard extends LitElement {
       assignedTo: chore.assigned_to || ""
     };
     
-    console.log("Simple Chores Card: Set edit data:", this._formData.chore);
+    // Debug logging removed
     
     // Direct modal swap - close one and open the other simultaneously
     this._showAllChoresModal = false;
@@ -1426,12 +1423,12 @@ class SimpleChoresCard extends LitElement {
       
       if (roomSelect) {
         roomSelect.value = this._formData.chore.room;
-        console.log("Simple Chores Card: Set room select from modal:", roomSelect.value);
+    // Debug logging removed
       }
       
       if (assignSelect) {
         assignSelect.value = this._formData.chore.assignedTo || "";
-        console.log("Simple Chores Card: Set assignment select from modal:", assignSelect.value);
+    // Debug logging removed
       }
     }, 100);
   }
@@ -1464,17 +1461,17 @@ class SimpleChoresCard extends LitElement {
     const totalChoresSensor = this.hass.states["sensor.total_chores"];
     
     if (totalChoresSensor && totalChoresSensor.attributes && totalChoresSensor.attributes.chores) {
-      console.log("Simple Chores Card: Found all chores in sensor.total_chores:", totalChoresSensor.attributes.chores);
+    // Debug logging removed
       return totalChoresSensor.attributes.chores;
     }
     
     // Fallback: try the due chores if the sensor isn't available yet
-    console.log("Simple Chores Card: sensor.total_chores not available, using fallback...");
+    // Debug logging removed
     const dueToday = this._getDueChores("today");
     const dueThisWeek = this._getDueChores("week");
     
     const fallbackChores = [...dueToday, ...dueThisWeek];
-    console.log("Simple Chores Card: Using fallback chores:", fallbackChores.length);
+    // Debug logging removed
     
     return fallbackChores;
   }
@@ -1588,7 +1585,7 @@ class SimpleChoresCard extends LitElement {
         currentUserId = this.hass.user.id;
       }
     } catch (e) {
-      console.debug("Could not get current user ID:", e);
+    // Debug logging removed
     }
 
     this._formData.completion = {
@@ -1608,7 +1605,7 @@ class SimpleChoresCard extends LitElement {
         currentUserId = this.hass.user.id;
       }
     } catch (e) {
-      console.debug("Could not get current user ID:", e);
+    // Debug logging removed
     }
 
     this._formData.completion = {
@@ -1626,27 +1623,12 @@ class SimpleChoresCard extends LitElement {
     this._resetForm('completion');
   }
 
-  _loadMoreChores(title, allChores) {
-    // For now, just render all chores (can be enhanced with true virtualization)
-    const section = this.shadowRoot.querySelector('.section h3').parentElement;
-    const choreList = section.querySelector('.chore-list');
-    const loadMoreBtn = choreList.querySelector('.load-more-btn');
-    
-    // Remove load more button
-    if (loadMoreBtn) {
-      loadMoreBtn.remove();
-    }
-    
-    // Add remaining chores
-    const rendered = choreList.children.length;
-    const remaining = allChores.slice(rendered);
-    
-    remaining.forEach(chore => {
-      const choreElement = this._renderChore(chore);
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = choreElement.strings.join('');
-      choreList.appendChild(tempDiv.firstElementChild);
-    });
+  _loadMoreChores(limitKey, totalCount) {
+    // Update the limit to show all chores - LitElement will re-render safely
+    this._choreLimits = {
+      ...this._choreLimits,
+      [limitKey]: totalCount
+    };
   }
 
 
@@ -1676,8 +1658,8 @@ class SimpleChoresCard extends LitElement {
         serviceData.assigned_to = choreData.assignedTo.trim();
       }
       
-      console.log("Simple Chores Card: Creating chore with data:", serviceData);
-      console.log("Simple Chores Card: Assignment data:", choreData.assignedTo);
+    // Debug logging removed
+    // Debug logging removed
 
       await this.hass.callService("simple_chores", "add_chore", serviceData);
       this._showToast("Chore created successfully!");
@@ -1749,7 +1731,7 @@ class SimpleChoresCard extends LitElement {
         user_id: completionData.completedBy
       };
 
-      console.log("Simple Chores Card: Completing chore with data:", serviceData);
+    // Debug logging removed
 
       await this.hass.callService("simple_chores", "complete_chore", serviceData);
       
@@ -1759,7 +1741,7 @@ class SimpleChoresCard extends LitElement {
           chore_id: completionData.choreId,
           assigned_to: completionData.reassignTo || null
         };
-        console.log("Simple Chores Card: Reassigning chore:", reassignData);
+    // Debug logging removed
         await this.hass.callService("simple_chores", "update_chore", reassignData);
       }
 
@@ -1778,13 +1760,13 @@ class SimpleChoresCard extends LitElement {
       
       if (totalChoresSensor && totalChoresSensor.attributes && totalChoresSensor.attributes.completion_history) {
         const history = totalChoresSensor.attributes.completion_history;
-        console.log("Simple Chores Card: Found completion history:", history);
+    // Debug logging removed
         
         // Sort by completion date (newest first)
         return history.sort((a, b) => new Date(b.completed_at) - new Date(a.completed_at));
       }
       
-      console.log("Simple Chores Card: No completion history found in sensor.simple_chores_total");
+    // Debug logging removed
       return [];
       
     } catch (error) {

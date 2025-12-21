@@ -80,8 +80,8 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Use rolling 7-day window instead of calendar week
         next_seven_days = today + timedelta(days=7)
 
-        # Get all rooms (HA Areas + custom) and clear cache
-        self._room_name_cache = None  # Clear cache to ensure fresh data
+        # Get all rooms (HA Areas + custom)
+        # Cache is only cleared when rooms are modified, not on every update
         all_rooms = await self._get_all_rooms()
         _LOGGER.debug("Available rooms: %s", [(room["id"], room["name"]) for room in all_rooms])
 
@@ -165,6 +165,10 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         return rooms
 
+    def _invalidate_room_cache(self) -> None:
+        """Invalidate the room name cache when rooms are modified."""
+        self._room_name_cache = None
+
     def _get_room_name(
         self, room_id: str, all_rooms: list[dict[str, Any]]
     ) -> str:
@@ -237,6 +241,7 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     ) -> dict[str, Any]:
         """Add a custom room."""
         room = self.store.add_room(name, icon)
+        self._invalidate_room_cache()  # Cache must be refreshed
         await self.store.async_save()
         await self.async_request_refresh()
         return room
@@ -247,6 +252,7 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Update a custom room."""
         room = self.store.update_room(room_id, name, icon)
         if room:
+            self._invalidate_room_cache()  # Cache must be refreshed
             await self.store.async_save()
             await self.async_request_refresh()
         return room
@@ -255,6 +261,7 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Remove a custom room."""
         result = self.store.remove_room(room_id)
         if result:
+            self._invalidate_room_cache()  # Cache must be refreshed
             await self.store.async_save()
             await self.async_request_refresh()
         return result
@@ -268,6 +275,15 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         assigned_to: str | None = None,
     ) -> dict[str, Any]:
         """Add a new chore."""
+        # Validate room exists before creating chore
+        all_rooms = await self._get_all_rooms()
+        valid_room_ids = {room["id"] for room in all_rooms}
+        if room_id not in valid_room_ids:
+            raise ValueError(
+                f"Invalid room ID: {room_id}. Room does not exist. "
+                f"Please create the room first or use an existing HA Area."
+            )
+
         _LOGGER.info("Coordinator: Adding chore '%s' with assigned_to: %s", name, assigned_to)
         chore = self.store.add_chore(name, room_id, frequency, start_date, assigned_to)
         _LOGGER.info("Coordinator: Created chore data: %s", chore)
@@ -285,6 +301,16 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         assigned_to: str | None = None,
     ) -> dict[str, Any] | None:
         """Update an existing chore."""
+        # Validate room exists if room_id is being updated
+        if room_id is not None:
+            all_rooms = await self._get_all_rooms()
+            valid_room_ids = {room["id"] for room in all_rooms}
+            if room_id not in valid_room_ids:
+                raise ValueError(
+                    f"Invalid room ID: {room_id}. Room does not exist. "
+                    f"Please create the room first or use an existing HA Area."
+                )
+
         chore = self.store.update_chore(chore_id, name, room_id, frequency, next_due, assigned_to)
         if chore:
             await self.store.async_save_debounced()  # Use debounced save for performance

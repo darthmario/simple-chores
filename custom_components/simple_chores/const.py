@@ -64,3 +64,4 @@ DEFAULT_NOTIFICATIONS_ENABLED: Final = True
 MAX_ROOM_NAME_LENGTH: Final = 50
 MAX_CHORE_NAME_LENGTH: Final = 100
 MAX_HISTORY_ENTRIES: Final = 1000
+MAX_CALENDAR_EVENTS: Final = 100  # Maximum events to generate per chore in calendar

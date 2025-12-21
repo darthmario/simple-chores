@@ -174,6 +174,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    # Flush any pending saves before unloading
+    coordinator: SimpleChoresCoordinator = hass.data[DOMAIN][entry.entry_id]
+    await coordinator.store.async_flush_debounced_save()
+
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id)
 
@@ -392,7 +396,7 @@ async def _async_send_due_notification(
                 },
             )
         except Exception as err:
-            _LOGGER.warning("Failed to send notification to %s: %s", target, err)
+            _LOGGER.warning("Failed to send notification to %s: %s", target, err, exc_info=True)
 
 
 async def _async_register_frontend_resources(hass: HomeAssistant) -> None:
@@ -466,7 +470,7 @@ async def _async_register_frontend_resources(hass: HomeAssistant) -> None:
             _LOGGER.info("Card copied to HACS community folder and registered: %s", card_url)
             _LOGGER.info("Card should be accessible at: %s", card_url)
         except Exception as err:
-            _LOGGER.error("HACS community folder method failed: %s", err)
+            _LOGGER.error("HACS community folder method failed: %s", err, exc_info=True)
         
         if registered:
             _LOGGER.info(
@@ -482,7 +486,7 @@ async def _async_register_frontend_resources(hass: HomeAssistant) -> None:
             _LOGGER.warning("2. Add /local/community/simple-chores/simple-chores-card.js to Lovelace resources")
         
     except Exception as err:
-        _LOGGER.error("Failed to register frontend resources: %s", err)
+        _LOGGER.error("Failed to register frontend resources: %s", err, exc_info=True)
         _LOGGER.error("Path attempted: %s", hass.config.path(f"custom_components/{DOMAIN}/www"))
 
 

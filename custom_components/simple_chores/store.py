@@ -83,6 +83,21 @@ class SimpleChoresStore:
         
         self._save_task = asyncio.create_task(_delayed_save())
 
+    async def async_flush_debounced_save(self) -> None:
+        """Flush any pending debounced save immediately (e.g., on shutdown)."""
+        # Cancel pending save task
+        if self._save_task and not self._save_task.done():
+            self._save_task.cancel()
+            try:
+                await self._save_task
+            except asyncio.CancelledError:
+                pass
+
+        # Save immediately if there are pending changes
+        if self._dirty:
+            _LOGGER.info("Flushing pending changes on shutdown")
+            await self.async_save()
+
     # Room operations
     def add_room(self, name: str, icon: str | None = None) -> dict[str, Any]:
         """Add a custom room."""
@@ -106,19 +121,51 @@ class SimpleChoresStore:
         """Update a custom room."""
         if room_id not in self._data["rooms"]:
             return None
+
+        # Validate name length if provided
+        if name is not None:
+            if not name.strip():
+                raise ValueError("Room name cannot be empty")
+            if len(name.strip()) > MAX_ROOM_NAME_LENGTH:
+                raise ValueError(f"Room name too long (max {MAX_ROOM_NAME_LENGTH} characters)")
+
         room = self._data["rooms"][room_id]
         if name is not None:
-            room["name"] = name
+            room["name"] = name.strip()
         if icon is not None:
             room["icon"] = icon
         return room
 
     def remove_room(self, room_id: str) -> bool:
-        """Remove a custom room."""
-        if room_id in self._data["rooms"]:
-            del self._data["rooms"][room_id]
-            return True
-        return False
+        """Remove a custom room and all associated chores."""
+        if room_id not in self._data["rooms"]:
+            return False
+
+        # Find and remove all chores associated with this room
+        chores_to_remove = [
+            chore_id for chore_id, chore in self._data["chores"].items()
+            if chore["room_id"] == room_id
+        ]
+
+        # Log and delete associated chores
+        for chore_id in chores_to_remove:
+            chore_name = self._data["chores"][chore_id].get("name", "Unknown")
+            _LOGGER.info("Removing chore '%s' (ID: %s) due to room deletion",
+                        chore_name, chore_id)
+            del self._data["chores"][chore_id]
+
+        # Remove the room
+        room_name = self._data["rooms"][room_id].get("name", room_id)
+        del self._data["rooms"][room_id]
+
+        if chores_to_remove:
+            _LOGGER.warning(
+                "Removed room '%s' and deleted %d associated chore(s)",
+                room_name,
+                len(chores_to_remove)
+            )
+
+        return True
 
     # Chore operations
     def add_chore(
@@ -137,6 +184,9 @@ class SimpleChoresStore:
             raise ValueError(f"Chore name too long (max {MAX_CHORE_NAME_LENGTH} characters)")
         if not room_id or not room_id.strip():
             raise ValueError("Room ID cannot be empty")
+
+        # Normalize frequency to lowercase for case-insensitive comparison
+        frequency = frequency.lower()
         if frequency not in FREQUENCIES:
             raise ValueError(f"Invalid frequency: {frequency}. Must be one of: {FREQUENCIES}")
         
@@ -171,6 +221,13 @@ class SimpleChoresStore:
         """Update an existing chore."""
         if chore_id not in self._data["chores"]:
             return None
+
+        # Normalize frequency to lowercase if provided
+        if frequency is not None:
+            frequency = frequency.lower()
+            if frequency not in FREQUENCIES:
+                raise ValueError(f"Invalid frequency: {frequency}. Must be one of: {FREQUENCIES}")
+
         chore = self._data["chores"][chore_id]
         if name is not None:
             chore["name"] = name
@@ -232,20 +289,21 @@ class SimpleChoresStore:
     def _cleanup_history(self) -> None:
         """Efficiently clean up history entries to prevent memory bloat."""
         history = self._data["history"]
-        
+
         # Only cleanup if we exceed the limit
         if len(history) <= MAX_HISTORY_ENTRIES:
             return
-        
-        # Sort by completion date (newest first) and keep only recent entries
-        try:
-            history.sort(key=lambda x: x.get("completed_at", ""), reverse=True)
-            self._data["history"] = history[:MAX_HISTORY_ENTRIES]
-            _LOGGER.debug("History cleanup: kept %d most recent entries", len(self._data["history"]))
-        except Exception as e:
-            # Fallback to simple truncation if sorting fails
-            _LOGGER.warning("History sort failed, using simple truncation: %s", e)
-            self._data["history"] = history[-MAX_HISTORY_ENTRIES:]
+
+        # Since we append entries in chronological order, we can simply
+        # keep the last N entries without expensive sorting
+        # This is O(1) instead of O(n log n)
+        entries_to_remove = len(history) - MAX_HISTORY_ENTRIES
+        self._data["history"] = history[entries_to_remove:]
+        _LOGGER.debug(
+            "History cleanup: removed %d old entries, kept %d most recent",
+            entries_to_remove,
+            len(self._data["history"])
+        )
 
     def skip_chore(self, chore_id: str, next_due: date) -> dict[str, Any] | None:
         """Skip a chore to the next occurrence without marking complete."""
