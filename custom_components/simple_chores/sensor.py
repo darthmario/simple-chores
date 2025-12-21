@@ -216,10 +216,17 @@ class SimpleChoresTotalSensor(SimpleChoresBaseSensor):
         """Return additional state attributes."""
         if self.coordinator.data is None:
             return {}
-        
+
         # Get all chores from the coordinator data
         all_chores = self.coordinator.data.get("chores", [])
-        
+        history = self.coordinator.store.history
+
+        _LOGGER.debug(
+            "Total sensor attributes: %d chores, %d history entries",
+            len(all_chores),
+            len(history)
+        )
+
         return {
             "chores": [
                 {
@@ -236,7 +243,7 @@ class SimpleChoresTotalSensor(SimpleChoresBaseSensor):
                 for c in all_chores
             ],
             "total_count": len(all_chores),
-            "completion_history": self.coordinator.store.history,
+            "completion_history": history,
             "rooms": [
                 {"id": r["id"], "name": r["name"], "is_custom": r.get("is_custom", False)}
                 for r in self.coordinator.data.get("rooms", [])

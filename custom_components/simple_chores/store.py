@@ -280,6 +280,12 @@ class SimpleChoresStore:
             "completed_by_name": user_name,
         }
         self._data["history"].append(history_entry)
+        _LOGGER.info(
+            "Added history entry for chore '%s' completed by %s. Total history entries: %d",
+            chore["name"],
+            user_name,
+            len(self._data["history"])
+        )
 
         # Efficient history cleanup to prevent memory bloat
         self._cleanup_history()

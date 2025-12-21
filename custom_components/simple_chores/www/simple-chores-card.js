@@ -99,6 +99,21 @@ class SimpleChoresCard extends LitElement {
       users: { data: null, lastUpdate: 0, ttl: 60000 }, // 1 minute TTL
       roomLookup: new Map() // Persistent room lookup cache
     };
+    // Common household icons
+    this._commonIcons = [
+      { icon: 'mdi:home', label: 'Home' },
+      { icon: 'mdi:bed', label: 'Bedroom' },
+      { icon: 'mdi:silverware-fork-knife', label: 'Kitchen' },
+      { icon: 'mdi:sofa', label: 'Living Room' },
+      { icon: 'mdi:toilet', label: 'Bathroom' },
+      { icon: 'mdi:car', label: 'Garage' },
+      { icon: 'mdi:gate', label: 'Entrance' },
+      { icon: 'mdi:office-building', label: 'Office' },
+      { icon: 'mdi:washing-machine', label: 'Laundry' },
+      { icon: 'mdi:dog', label: 'Pet Area' },
+      { icon: 'mdi:tree', label: 'Garden' },
+      { icon: 'mdi:stairs', label: 'Stairs/Hallway' },
+    ];
   }
 
   _initializeFormData() {
@@ -250,6 +265,12 @@ class SimpleChoresCard extends LitElement {
     return 'Unknown Room';
   }
 
+  _getRoomIcon(roomId) {
+    const rooms = this._getRooms();
+    const room = rooms.find(r => r.id === roomId);
+    return room?.icon || 'mdi:home';
+  }
+
   static getStubConfig() {
     return {
       type: "custom:simple-chores-card",
@@ -382,15 +403,16 @@ class SimpleChoresCard extends LitElement {
 
     // Handle different property names from different data sources
     let dueDate = chore.next_due || chore.due_date || chore.date;
-    
+
     // Fix for Due Today chores - if no specific date, use today's date
     if (!dueDate) {
       dueDate = new Date().toISOString().split('T')[0];
     }
-    
+
     // Use consolidated room lookup logic
     const roomName = this._resolveRoomName(chore);
-    
+    const roomIcon = this._getRoomIcon(chore.room_id);
+
     // Get assigned user info
     const assignedTo = chore.assigned_to;
     let assignedUserName = null;
@@ -399,15 +421,18 @@ class SimpleChoresCard extends LitElement {
       const assignedUser = users.find(u => u.id === assignedTo);
       assignedUserName = assignedUser ? assignedUser.name : assignedTo;
     }
-    
+
     const isOverdue = new Date(dueDate) < new Date().setHours(0,0,0,0);
-    
+
     return html`
       <div class="chore-item ${isOverdue ? 'overdue' : ''}">
         <div class="chore-info">
           <span class="chore-name">${chore.name}</span>
           <span class="chore-separator">•</span>
-          <span class="chore-room">${roomName}</span>
+          <span class="chore-room">
+            <ha-icon icon="${roomIcon}" class="room-icon-inline"></ha-icon>
+            ${roomName}
+          </span>
           <span class="chore-separator">•</span>
           <span class="chore-due">Due: ${this._formatDate(dueDate)}</span>
           ${assignedUserName ? html`
@@ -724,6 +749,10 @@ class SimpleChoresCard extends LitElement {
     this._handleFormInput('room', 'icon', e.target.value);
   }
 
+  _selectIcon(icon) {
+    this._handleFormInput('room', 'icon', icon);
+  }
+
   _submitAddRoom() {
     const validation = this._validateForm('room', ['name']);
     if (!validation.valid) {
@@ -808,9 +837,9 @@ class SimpleChoresCard extends LitElement {
           <div class="modal-body">
             <div class="form-group">
               <label for="room-name">Room Name *</label>
-              <input 
+              <input
                 id="room-name"
-                type="text" 
+                type="text"
                 .value=${this._formData.room.name}
                 @input=${this._handleRoomNameInput}
                 placeholder="Enter room name..."
@@ -818,15 +847,35 @@ class SimpleChoresCard extends LitElement {
               />
             </div>
             <div class="form-group">
-              <label for="room-icon">Icon (optional)</label>
-              <input 
-                id="room-icon"
-                type="text" 
-                .value=${this._formData.room.icon}
-                @input=${this._handleRoomIconInput}
-                placeholder="mdi:home"
-              />
-              <small>Use MDI icon names like: mdi:bed, mdi:sofa, mdi:car, etc.</small>
+              <label>Icon *</label>
+              <div class="icon-picker">
+                <div class="icon-preview">
+                  <ha-icon icon="${this._formData.room.icon || 'mdi:home'}"></ha-icon>
+                  <span>${this._formData.room.icon || 'mdi:home'}</span>
+                </div>
+                <div class="icon-grid">
+                  ${this._commonIcons.map(item => html`
+                    <button
+                      type="button"
+                      class="icon-option ${this._formData.room.icon === item.icon ? 'selected' : ''}"
+                      @click=${() => this._selectIcon(item.icon)}
+                      title="${item.label}"
+                    >
+                      <ha-icon icon="${item.icon}"></ha-icon>
+                      <span class="icon-label">${item.label}</span>
+                    </button>
+                  `)}
+                </div>
+                <div class="custom-icon-input">
+                  <small>Or enter a custom MDI icon:</small>
+                  <input
+                    type="text"
+                    .value=${this._formData.room.icon}
+                    @input=${this._handleRoomIconInput}
+                    placeholder="mdi:custom-icon"
+                  />
+                </div>
+              </div>
             </div>
           </div>
           <div class="modal-footer">
@@ -976,8 +1025,13 @@ class SimpleChoresCard extends LitElement {
               />
             </div>
             <div class="form-group">
-              <label for="chore-room">Room *</label>
-              <select 
+              <label for="chore-room">
+                Room *
+                ${this._formData.chore.room ? html`
+                  <ha-icon icon="${this._getRoomIcon(this._formData.chore.room)}" class="room-icon-inline"></ha-icon>
+                ` : ''}
+              </label>
+              <select
                 id="chore-room"
                 .value=${this._formData.chore.room}
                 @change=${this._handleChoreRoomInput}
@@ -1157,8 +1211,13 @@ class SimpleChoresCard extends LitElement {
               />
             </div>
             <div class="form-group">
-              <label for="edit-chore-room">Room *</label>
-              <select 
+              <label for="edit-chore-room">
+                Room *
+                ${this._formData.chore.room ? html`
+                  <ha-icon icon="${this._getRoomIcon(this._formData.chore.room)}" class="room-icon-inline"></ha-icon>
+                ` : ''}
+              </label>
+              <select
                 id="edit-chore-room"
                 .value=${this._formData.chore.room}
                 @change=${this._handleEditChoreRoomInput}
@@ -2408,7 +2467,112 @@ class SimpleChoresCard extends LitElement {
         color: var(--secondary-text-color);
         font-size: 12px;
       }
-      
+
+      /* Icon Picker Styles */
+      .icon-picker {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .icon-preview {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        background: var(--secondary-background-color);
+        border-radius: 8px;
+      }
+
+      .icon-preview ha-icon {
+        --mdc-icon-size: 32px;
+        color: var(--primary-color);
+      }
+
+      .icon-preview span {
+        font-family: monospace;
+        font-size: 14px;
+        color: var(--secondary-text-color);
+      }
+
+      .icon-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+        gap: 8px;
+        max-height: 300px;
+        overflow-y: auto;
+        padding: 8px;
+        background: var(--secondary-background-color);
+        border-radius: 8px;
+      }
+
+      .icon-option {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        padding: 12px 8px;
+        background: var(--card-background-color);
+        border: 2px solid var(--divider-color);
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+
+      .icon-option:hover {
+        border-color: var(--primary-color);
+        transform: translateY(-2px);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      }
+
+      .icon-option.selected {
+        border-color: var(--primary-color);
+        background: rgba(var(--primary-color-rgb), 0.1);
+      }
+
+      .icon-option ha-icon {
+        --mdc-icon-size: 28px;
+        color: var(--primary-text-color);
+      }
+
+      .icon-option.selected ha-icon {
+        color: var(--primary-color);
+      }
+
+      .icon-label {
+        font-size: 10px;
+        text-align: center;
+        color: var(--secondary-text-color);
+        line-height: 1.2;
+      }
+
+      .room-icon-inline {
+        --mdc-icon-size: 16px;
+        vertical-align: middle;
+        margin-left: 6px;
+        color: var(--primary-color);
+      }
+
+      .custom-icon-input {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .custom-icon-input input {
+        padding: 10px;
+        border: 2px solid var(--divider-color);
+        border-radius: 6px;
+        background: var(--card-background-color);
+        color: var(--primary-text-color);
+        font-family: monospace;
+      }
+
+      .custom-icon-input input:focus {
+        outline: none;
+        border-color: var(--primary-color);
+      }
+
       .modal-footer {
         display: flex;
         justify-content: flex-end;
