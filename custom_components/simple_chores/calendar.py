@@ -135,8 +135,11 @@ class SimpleChoresCalendar(
         while current_due < start:
             try:
                 current_due = calculate_next_due(current_due, frequency)
-            except Exception as e:
-                _LOGGER.error("Error calculating next due date for chore %s: %s", chore["id"], e)
+            except (ValueError, OverflowError) as e:
+                _LOGGER.error("Invalid date calculation for chore %s: %s", chore["id"], e, exc_info=True)
+                break
+            except Exception:
+                _LOGGER.exception("Unexpected error calculating next due date for chore %s", chore["id"])
                 break
 
         # Generate events until we pass the end date
@@ -155,8 +158,11 @@ class SimpleChoresCalendar(
                 )
                 current_due = calculate_next_due(current_due, frequency)
                 count += 1
-            except Exception as e:
-                _LOGGER.error("Error generating calendar event for chore %s: %s", chore["id"], e)
+            except (ValueError, OverflowError) as e:
+                _LOGGER.error("Invalid date calculation generating event for chore %s: %s", chore["id"], e, exc_info=True)
+                break
+            except Exception:
+                _LOGGER.exception("Unexpected error generating calendar event for chore %s", chore["id"])
                 break
 
         return events

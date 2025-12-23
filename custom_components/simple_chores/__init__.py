@@ -7,13 +7,14 @@ import logging
 import os
 import shutil
 from datetime import date, datetime, time, timedelta
-from typing import Any
+from typing import Any, Callable, Awaitable
 
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_time_change
 
@@ -153,9 +154,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Set up platforms
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    except Exception as e:
-        _LOGGER.error("Failed to setup Simple Chores integration: %s", e, exc_info=True)
+    except (OSError, IOError) as e:
+        _LOGGER.error("File system error during setup: %s", e, exc_info=True)
         return False
+    except HomeAssistantError as e:
+        _LOGGER.error("Home Assistant error during setup: %s", e, exc_info=True)
+        return False
+    except Exception:
+        _LOGGER.exception("Unexpected error setting up Simple Chores integration")
+        raise
 
     # Register services
     await _async_setup_services(hass, coordinator)
@@ -196,67 +203,109 @@ class ServiceHandlerFactory:
         self.coordinator = coordinator
         self.hass = hass
     
-    def create_room_handler(self, operation: str):
+    def create_room_handler(self, operation: str) -> Callable[[ServiceCall], Awaitable[None]]:
         """Create a room operation handler."""
         async def handler(call: ServiceCall) -> None:
-            room_id = call.data.get(ATTR_ROOM_ID)
-            name = call.data.get(ATTR_ROOM_NAME)
-            icon = call.data.get(ATTR_ICON)
-            
-            if operation == "add":
-                await self.coordinator.async_add_room(name, icon)
-            elif operation == "remove":
-                await self.coordinator.async_remove_room(room_id)
-            elif operation == "update":
-                await self.coordinator.async_update_room(room_id, name, icon)
-        
+            try:
+                room_id = call.data.get(ATTR_ROOM_ID)
+                name = call.data.get(ATTR_ROOM_NAME)
+                icon = call.data.get(ATTR_ICON)
+
+                if operation == "add":
+                    await self.coordinator.async_add_room(name, icon)
+                    _LOGGER.info("Successfully added room: %s", name)
+                elif operation == "remove":
+                    await self.coordinator.async_remove_room(room_id)
+                    _LOGGER.info("Successfully removed room: %s", room_id)
+                elif operation == "update":
+                    await self.coordinator.async_update_room(room_id, name, icon)
+                    _LOGGER.info("Successfully updated room: %s", room_id)
+            except ValueError as e:
+                _LOGGER.error("Validation error in %s_room: %s", operation, e)
+                raise HomeAssistantError(f"Invalid input: {e}") from e
+            except KeyError as e:
+                _LOGGER.error("Missing required field in %s_room: %s", operation, e)
+                raise HomeAssistantError(f"Missing required field: {e}") from e
+            except Exception as e:
+                _LOGGER.exception("Unexpected error in %s_room", operation)
+                raise HomeAssistantError(f"Failed to {operation} room: {e}") from e
+
         return handler
     
-    def create_chore_handler(self, operation: str):
+    def create_chore_handler(self, operation: str) -> Callable[[ServiceCall], Awaitable[None]]:
         """Create a chore operation handler."""
         async def handler(call: ServiceCall) -> None:
-            chore_id = call.data.get(ATTR_CHORE_ID)
-            name = call.data.get(ATTR_CHORE_NAME)
-            room_id = call.data.get(ATTR_ROOM_ID)
-            frequency = call.data.get(ATTR_FREQUENCY)
-            start_date = call.data.get(ATTR_START_DATE)
-            next_due = call.data.get(ATTR_NEXT_DUE)
-            assigned_to = call.data.get(ATTR_ASSIGNED_TO)
-            
-            if operation == "add":
-                await self.coordinator.async_add_chore(name, room_id, frequency, start_date, assigned_to)
-            elif operation == "remove":
-                await self.coordinator.async_remove_chore(chore_id)
-            elif operation == "update":
-                await self.coordinator.async_update_chore(chore_id, name, room_id, frequency, next_due, assigned_to)
-            elif operation == "complete":
-                user_id = call.data.get(ATTR_USER_ID)
-                if user_id is None and call.context.user_id:
-                    user_id = call.context.user_id
-                await self.coordinator.async_complete_chore(chore_id, user_id)
-            elif operation == "skip":
-                await self.coordinator.async_skip_chore(chore_id)
-        
+            try:
+                chore_id = call.data.get(ATTR_CHORE_ID)
+                name = call.data.get(ATTR_CHORE_NAME)
+                room_id = call.data.get(ATTR_ROOM_ID)
+                frequency = call.data.get(ATTR_FREQUENCY)
+                start_date = call.data.get(ATTR_START_DATE)
+                next_due = call.data.get(ATTR_NEXT_DUE)
+                assigned_to = call.data.get(ATTR_ASSIGNED_TO)
+
+                if operation == "add":
+                    await self.coordinator.async_add_chore(name, room_id, frequency, start_date, assigned_to)
+                    _LOGGER.info("Successfully added chore: %s", name)
+                elif operation == "remove":
+                    await self.coordinator.async_remove_chore(chore_id)
+                    _LOGGER.info("Successfully removed chore: %s", chore_id)
+                elif operation == "update":
+                    await self.coordinator.async_update_chore(chore_id, name, room_id, frequency, next_due, assigned_to)
+                    _LOGGER.info("Successfully updated chore: %s", chore_id)
+                elif operation == "complete":
+                    user_id = call.data.get(ATTR_USER_ID)
+                    if user_id is None and call.context.user_id:
+                        user_id = call.context.user_id
+                    await self.coordinator.async_complete_chore(chore_id, user_id)
+                    _LOGGER.info("Successfully completed chore: %s by user: %s", chore_id, user_id)
+                elif operation == "skip":
+                    await self.coordinator.async_skip_chore(chore_id)
+                    _LOGGER.info("Successfully skipped chore: %s", chore_id)
+            except ValueError as e:
+                _LOGGER.error("Validation error in %s_chore: %s", operation, e)
+                raise HomeAssistantError(f"Invalid input: {e}") from e
+            except KeyError as e:
+                _LOGGER.error("Missing required field in %s_chore: %s", operation, e)
+                raise HomeAssistantError(f"Missing required field: {e}") from e
+            except Exception as e:
+                _LOGGER.exception("Unexpected error in %s_chore", operation)
+                raise HomeAssistantError(f"Failed to {operation} chore: {e}") from e
+
         return handler
     
-    def create_data_handler(self, data_type: str):
+    def create_data_handler(self, data_type: str) -> Callable[[ServiceCall], Awaitable[dict[str, Any]]]:
         """Create a data retrieval handler."""
         async def handler(call: ServiceCall) -> dict[str, Any]:
-            if data_type == "history":
-                chore_id = call.data[ATTR_CHORE_ID]
-                history = self.coordinator.store.get_chore_history(chore_id)
-                return {"history": history}
-            elif data_type == "stats":
-                stats = self.coordinator.store.get_user_stats()
-                return {"stats": stats}
-        
+            try:
+                if data_type == "history":
+                    chore_id = call.data[ATTR_CHORE_ID]
+                    history = self.coordinator.store.get_chore_history(chore_id)
+                    _LOGGER.debug("Retrieved %d history entries for chore: %s", len(history), chore_id)
+                    return {"history": history}
+                elif data_type == "stats":
+                    stats = self.coordinator.store.get_user_stats()
+                    _LOGGER.debug("Retrieved stats for %d users", len(stats))
+                    return {"stats": stats}
+            except KeyError as e:
+                _LOGGER.error("Missing required field in get_%s: %s", data_type, e)
+                raise HomeAssistantError(f"Missing required field: {e}") from e
+            except Exception as e:
+                _LOGGER.exception("Unexpected error in get_%s", data_type)
+                raise HomeAssistantError(f"Failed to get {data_type}: {e}") from e
+
         return handler
-    
-    def create_notification_handler(self):
+
+    def create_notification_handler(self) -> Callable[[ServiceCall], Awaitable[None]]:
         """Create notification handler."""
         async def handler(call: ServiceCall) -> None:
-            await _async_send_due_notification(self.hass, self.coordinator)
-        
+            try:
+                await _async_send_due_notification(self.hass, self.coordinator)
+                _LOGGER.info("Successfully sent notification")
+            except Exception as e:
+                _LOGGER.exception("Error sending notification")
+                raise HomeAssistantError(f"Failed to send notification: {e}") from e
+
         return handler
 
 
@@ -395,8 +444,13 @@ async def _async_send_due_notification(
                     },
                 },
             )
-        except Exception as err:
+        except ServiceNotFound:
+            _LOGGER.warning("Notification service not found for target: %s", target)
+        except (HomeAssistantError, ValueError) as err:
             _LOGGER.warning("Failed to send notification to %s: %s", target, err, exc_info=True)
+        except Exception:
+            _LOGGER.exception("Unexpected error sending notification to %s", target)
+            # Don't raise - notification failures shouldn't break the integration
 
 
 async def _async_register_frontend_resources(hass: HomeAssistant) -> None:

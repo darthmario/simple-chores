@@ -78,8 +78,11 @@ class SimpleChoresStore:
                     _LOGGER.debug("Debounced save completed")
             except asyncio.CancelledError:
                 _LOGGER.debug("Debounced save cancelled")
-            except Exception as e:
-                _LOGGER.error("Error in debounced save: %s", e)
+            except (OSError, IOError, PermissionError) as e:
+                _LOGGER.error("File system error in debounced save: %s", e, exc_info=True)
+            except Exception:
+                _LOGGER.exception("Unexpected error in debounced save")
+                raise  # Re-raise unexpected errors
         
         self._save_task = asyncio.create_task(_delayed_save())
 
