@@ -6,6 +6,9 @@
 // Try the most direct approach used by working HA cards
 let LitElement, html, css;
 
+// Module-level constants
+const INIT_RETRY_DELAY = 500; // milliseconds
+
 // Function to initialize when HA is ready
 const initCard = () => {
   // Get LitElement from global or existing elements
@@ -34,7 +37,7 @@ const initCard = () => {
 
   // Wait and try again
   console.warn("Simple Chores Card: Waiting for LitElement...");
-  setTimeout(initCard, 500);
+  setTimeout(initCard, INIT_RETRY_DELAY);
 };
 
 const defineCards = () => {
@@ -66,6 +69,25 @@ class SimpleChoresCard extends LitElement {
       _historyData: { type: Array },
       // Chore display limits for progressive rendering
       _choreLimits: { type: Object },
+      // Loading state for async operations
+      _isLoading: { type: Boolean },
+    };
+  }
+
+  // Constants for timing and limits
+  static get constants() {
+    return {
+      // Timeout delays (milliseconds)
+      MODAL_FOCUS_DELAY: 100,
+      RETRY_DELAY: 500,
+
+      // Cache TTLs (milliseconds)
+      ROOM_CACHE_TTL: 30000,  // 30 seconds
+      USER_CACHE_TTL: 60000,  // 1 minute
+
+      // Display limits
+      DEFAULT_CHORE_LIMIT: 20,
+      MAX_RETRY_ATTEMPTS: 10,
     };
   }
 
@@ -90,13 +112,15 @@ class SimpleChoresCard extends LitElement {
     this._historyData = [];
     // Chore display limits for progressive rendering
     this._choreLimits = {
-      dueToday: 20,
-      dueNext7Days: 20
+      dueToday: this.constructor.constants.DEFAULT_CHORE_LIMIT,
+      dueNext7Days: this.constructor.constants.DEFAULT_CHORE_LIMIT
     };
+    // Loading state
+    this._isLoading = false;
     // Performance caching
     this._cache = {
-      rooms: { data: null, lastUpdate: 0, ttl: 30000 }, // 30 second TTL
-      users: { data: null, lastUpdate: 0, ttl: 60000 }, // 1 minute TTL
+      rooms: { data: null, lastUpdate: 0, ttl: this.constructor.constants.ROOM_CACHE_TTL },
+      users: { data: null, lastUpdate: 0, ttl: this.constructor.constants.USER_CACHE_TTL },
       roomLookup: new Map() // Persistent room lookup cache
     };
     // Common household icons
@@ -114,6 +138,63 @@ class SimpleChoresCard extends LitElement {
       { icon: 'mdi:tree', label: 'Garden' },
       { icon: 'mdi:stairs', label: 'Stairs/Hallway' },
     ];
+
+    // Bind keyboard handler for proper removal
+    this._handleKeydown = this._handleKeydown.bind(this);
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    // Add global keyboard event listener
+    document.addEventListener('keydown', this._handleKeydown);
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    // Remove keyboard event listener
+    document.removeEventListener('keydown', this._handleKeydown);
+  }
+
+  _handleKeydown(e) {
+    // ESC key - close any open modal
+    if (e.key === 'Escape') {
+      if (this._showAddRoomModal) {
+        this._closeAddRoomModal();
+      } else if (this._showManageRoomsModal) {
+        this._closeManageRoomsModal();
+      } else if (this._showAddChoreModal) {
+        this._closeAddChoreModal();
+      } else if (this._showEditChoreModal) {
+        this._closeEditChoreModal();
+      } else if (this._showAllChoresModal) {
+        this._closeAllChoresModal();
+      } else if (this._showHistoryModal) {
+        this._closeHistoryModal();
+      } else if (this._showCompleteChoreModal) {
+        this._closeCompleteChoreModal();
+      }
+      return;
+    }
+
+    // Enter key - submit forms (only if not already loading)
+    if (e.key === 'Enter' && !this._isLoading) {
+      // Check if we're in an input field (not textarea)
+      const target = e.target;
+      if (target.tagName === 'INPUT' || target.tagName === 'SELECT') {
+        e.preventDefault();
+
+        // Determine which modal is open and submit
+        if (this._showAddRoomModal) {
+          this._submitAddRoom();
+        } else if (this._showAddChoreModal) {
+          this._submitAddChore();
+        } else if (this._showEditChoreModal) {
+          this._submitEditChore();
+        } else if (this._showCompleteChoreModal) {
+          this._submitCompleteChore();
+        }
+      }
+    }
   }
 
   _initializeFormData() {
@@ -482,7 +563,6 @@ class SimpleChoresCard extends LitElement {
     const chores = this.hass.states[sensorName]?.attributes?.chores || [];
     
     // Debug log to see what we're getting
-    // Debug logging removed
     
     // Process chores to ensure proper date formatting and properties
     const processedChores = chores.map(chore => {
@@ -505,8 +585,7 @@ class SimpleChoresCard extends LitElement {
       }
       
       // Debug log for each chore
-      // Debug logging removed
-      
+        
       return processedChore;
     });
     
@@ -584,23 +663,18 @@ class SimpleChoresCard extends LitElement {
       key.startsWith('sensor.') && (key.includes('chores') || key.includes('overdue'))
     );
     
-    // Debug logging removed
     
     // Debug: Check if we have ANY entities from this integration
     const allHouseholdEntities = Object.keys(this.hass.states).filter(key => 
       key.includes('household_tasks') || key.includes('simple_chores')
     );
-    // Debug logging removed
     
     // Check if calendar has any room data
     const calendar = this.hass.states["calendar.household_tasks"];
-    // Debug logging removed
     if (calendar && calendar.attributes) {
-    // Debug logging removed
       
       // Check if calendar has room data in attributes
       if (calendar.attributes.rooms) {
-    // Debug logging removed
         rooms = calendar.attributes.rooms;
       }
     }
@@ -617,12 +691,9 @@ class SimpleChoresCard extends LitElement {
       
       for (const sensorName of possibleTotalSensors) {
         const sensor = this.hass.states[sensorName];
-    // Debug logging removed
         
         if (sensor) {
-    // Debug logging removed
           if (sensor.attributes && sensor.attributes.rooms) {
-    // Debug logging removed
             rooms = sensor.attributes.rooms;
             break;
           }
@@ -734,6 +805,12 @@ class SimpleChoresCard extends LitElement {
   _openAddRoomModal() {
     this._showAddRoomModal = true;
     this._resetForm('room');
+
+    // Focus first input after modal renders
+    setTimeout(() => {
+      const input = this.shadowRoot.querySelector('#room-name');
+      if (input) input.focus();
+    }, this.constructor.constants.MODAL_FOCUS_DELAY);
   }
 
   _closeAddRoomModal() {
@@ -753,7 +830,7 @@ class SimpleChoresCard extends LitElement {
     this._handleFormInput('room', 'icon', icon);
   }
 
-  _submitAddRoom() {
+  async _submitAddRoom() {
     const validation = this._validateForm('room', ['name']);
     if (!validation.valid) {
       this._showToast(validation.message);
@@ -763,11 +840,9 @@ class SimpleChoresCard extends LitElement {
     // Check for duplicate room names
     const roomName = this._formData.room.name.trim();
     const existingRooms = this._getRooms();
-    
-    // Debug logging removed
-    // Debug logging removed
-    
-    const duplicateRoom = existingRooms.find(room => 
+
+
+    const duplicateRoom = existingRooms.find(room =>
       room.name.toLowerCase() === roomName.toLowerCase()
     );
 
@@ -776,48 +851,50 @@ class SimpleChoresCard extends LitElement {
       return;
     }
 
-    // Call service to add room
-    this.hass.callService("simple_chores", "add_room", {
-      name: roomName,
-      icon: this._formData.room.icon || "mdi:home"
-    }).then((result) => {
-    // Debug logging removed
-      
+    this._isLoading = true;
+    try {
+      // Call service to add room
+      await this.hass.callService("simple_chores", "add_room", {
+        name: roomName,
+        icon: this._formData.room.icon || "mdi:home"
+      });
+
+  
       // Wait and check if the room data updates
       const checkForRoom = (attempts = 0) => {
         setTimeout(() => {
           const roomsAfter = this._getRooms();
-          const foundNewRoom = roomsAfter.find(room => 
+          const foundNewRoom = roomsAfter.find(room =>
             room.name.toLowerCase() === roomName.toLowerCase()
           );
-          
-    // Debug logging removed
-          
+
+
           if (foundNewRoom) {
-    // Debug logging removed
             this._showToast(`Room "${roomName}" created successfully!`);
             this._closeAddRoomModal();
             this.requestUpdate();
-          } else if (attempts < 10) {
-            // Try again, up to 10 attempts (5 seconds total)
+          } else if (attempts < this.constructor.constants.MAX_RETRY_ATTEMPTS) {
+            // Try again, up to MAX_RETRY_ATTEMPTS (5 seconds total)
             checkForRoom(attempts + 1);
           } else {
-            console.warn("Simple Chores Card: Room not found after 10 attempts");
+            console.warn(`Simple Chores Card: Room not found after ${this.constructor.constants.MAX_RETRY_ATTEMPTS} attempts`);
             this._showToast(`Room "${roomName}" created, but may require a page refresh to appear`);
             this._closeAddRoomModal();
             this.requestUpdate();
           }
-        }, 500);
+        }, this.constructor.constants.RETRY_DELAY);
       };
-      
+
       checkForRoom();
-      
+
       // Invalidate room cache since we added a new room
       this._invalidateCache('rooms');
-    }).catch(error => {
+    } catch (error) {
       console.error("Simple Chores Card: Service call failed:", error);
       this._showToast(`Error creating room: ${error.message}`);
-    });
+    } finally {
+      this._isLoading = false;
+    }
   }
 
   _renderAddRoomModal() {
@@ -827,10 +904,10 @@ class SimpleChoresCard extends LitElement {
 
     return html`
       <div class="modal-overlay" @click=${this._closeAddRoomModal}>
-        <div class="modal-content" @click=${(e) => e.stopPropagation()}>
+        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="add-room-title" @click=${(e) => e.stopPropagation()}>
           <div class="modal-header">
-            <h3>Add Custom Room</h3>
-            <button class="close-btn" @click=${this._closeAddRoomModal}>
+            <h3 id="add-room-title">Add Custom Room</h3>
+            <button class="close-btn" @click=${this._closeAddRoomModal} aria-label="Close dialog">
               <ha-icon icon="mdi:close"></ha-icon>
             </button>
           </div>
@@ -879,8 +956,12 @@ class SimpleChoresCard extends LitElement {
             </div>
           </div>
           <div class="modal-footer">
-            <button class="cancel-btn" @click=${this._closeAddRoomModal}>Cancel</button>
-            <button class="submit-btn" @click=${this._submitAddRoom} ?disabled=${!this._formData.room.name?.trim()}>
+            <button class="cancel-btn" @click=${this._closeAddRoomModal} ?disabled=${this._isLoading}>Cancel</button>
+            <button
+              class="submit-btn ${this._isLoading ? 'loading' : ''}"
+              @click=${this._submitAddRoom}
+              ?disabled=${!this._formData.room.name?.trim() || this._isLoading}>
+              ${this._isLoading ? html`<span class="spinner"></span>` : ''}
               Create Room
             </button>
           </div>
@@ -902,11 +983,12 @@ class SimpleChoresCard extends LitElement {
       return;
     }
 
+    this._isLoading = true;
     try {
       await this.hass.callService("simple_chores", "remove_room", {
         room_id: roomId
       });
-      
+
       this._showToast(`Room "${roomName}" deleted successfully!`);
       // Invalidate room cache since we deleted a room
       this._invalidateCache('rooms');
@@ -914,6 +996,8 @@ class SimpleChoresCard extends LitElement {
     } catch (error) {
       console.error("Simple Chores Card: Failed to delete room:", error);
       this._showToast(`Error deleting room: ${error.message}`);
+    } finally {
+      this._isLoading = false;
     }
   }
 
@@ -927,10 +1011,10 @@ class SimpleChoresCard extends LitElement {
 
     return html`
       <div class="modal-overlay" @click=${this._closeManageRoomsModal}>
-        <div class="modal-content" @click=${(e) => e.stopPropagation()}>
+        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="manage-rooms-title" @click=${(e) => e.stopPropagation()}>
           <div class="modal-header">
-            <h3>Manage Custom Rooms</h3>
-            <button class="close-btn" @click=${this._closeManageRoomsModal}>
+            <h3 id="manage-rooms-title">Manage Custom Rooms</h3>
+            <button class="close-btn" @click=${this._closeManageRoomsModal} aria-label="Close dialog">
               <ha-icon icon="mdi:close"></ha-icon>
             </button>
           </div>
@@ -968,6 +1052,12 @@ class SimpleChoresCard extends LitElement {
   _openAddChoreModal() {
     this._showAddChoreModal = true;
     this._resetForm('chore');
+
+    // Focus first input after modal renders
+    setTimeout(() => {
+      const input = this.shadowRoot.querySelector('#chore-name');
+      if (input) input.focus();
+    }, this.constructor.constants.MODAL_FOCUS_DELAY);
   }
 
   _closeAddChoreModal() {
@@ -1005,10 +1095,10 @@ class SimpleChoresCard extends LitElement {
 
     return html`
       <div class="modal-overlay" @click=${this._closeAddChoreModal}>
-        <div class="modal-content" @click=${(e) => e.stopPropagation()}>
+        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="add-chore-title" @click=${(e) => e.stopPropagation()}>
           <div class="modal-header">
-            <h3>Add New Chore</h3>
-            <button class="close-btn" @click=${this._closeAddChoreModal}>
+            <h3 id="add-chore-title">Add New Chore</h3>
+            <button class="close-btn" @click=${this._closeAddChoreModal} aria-label="Close dialog">
               <ha-icon icon="mdi:close"></ha-icon>
             </button>
           </div>
@@ -1087,9 +1177,12 @@ class SimpleChoresCard extends LitElement {
             </div>
           </div>
           <div class="modal-footer">
-            <button class="cancel-btn" @click=${this._closeAddChoreModal}>Cancel</button>
-            <button class="submit-btn" @click=${this._submitAddChore} 
-                    ?disabled=${!this._formData.chore.name?.trim() || !this._formData.chore.room?.trim()}>
+            <button class="cancel-btn" @click=${this._closeAddChoreModal} ?disabled=${this._isLoading}>Cancel</button>
+            <button
+              class="submit-btn ${this._isLoading ? 'loading' : ''}"
+              @click=${this._submitAddChore}
+              ?disabled=${!this._formData.chore.name?.trim() || !this._formData.chore.room?.trim() || this._isLoading}>
+              ${this._isLoading ? html`<span class="spinner"></span>` : ''}
               Create Chore
             </button>
           </div>
@@ -1099,7 +1192,6 @@ class SimpleChoresCard extends LitElement {
   }
 
   _editChore(chore) {
-    // Debug logging removed
     
     // Handle room ID properly - some might be room names instead of IDs
     let roomId = chore.room_id || chore.room || "";
@@ -1110,7 +1202,6 @@ class SimpleChoresCard extends LitElement {
       const roomByName = rooms.find(r => r.name === roomId);
       if (roomByName) {
         roomId = roomByName.id;
-    // Debug logging removed
       }
     }
     
@@ -1124,28 +1215,28 @@ class SimpleChoresCard extends LitElement {
       assignedTo: chore.assigned_to || ""
     };
     
-    // Debug logging removed
     
     // Show the modal and request update
     this._showEditChoreModal = true;
     this.requestUpdate();
     
-    // Force update the select elements after modal is shown
+    // Force update the select elements after modal is shown and focus first input
     setTimeout(() => {
       const roomSelect = this.shadowRoot?.querySelector('#edit-chore-room');
       const assignSelect = this.shadowRoot?.querySelector('#edit-chore-assigned-to');
-      
+      const nameInput = this.shadowRoot?.querySelector('#edit-chore-name');
+
       if (roomSelect) {
         roomSelect.value = this._formData.chore.room;
-    // Debug logging removed
       }
-      
+
       if (assignSelect) {
         assignSelect.value = this._formData.chore.assignedTo || "";
-    // Debug logging removed
-    // Debug logging removed
       }
-    }, 100);
+
+      // Focus first input for keyboard navigation
+      if (nameInput) nameInput.focus();
+    }, this.constructor.constants.MODAL_FOCUS_DELAY);
   }
 
   _closeEditChoreModal() {
@@ -1191,10 +1282,10 @@ class SimpleChoresCard extends LitElement {
 
     return html`
       <div class="modal-overlay" @click=${this._closeEditChoreModal}>
-        <div class="modal-content" @click=${(e) => e.stopPropagation()}>
+        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="edit-chore-title" @click=${(e) => e.stopPropagation()}>
           <div class="modal-header">
-            <h3>Edit Chore</h3>
-            <button class="close-btn" @click=${this._closeEditChoreModal}>
+            <h3 id="edit-chore-title">Edit Chore</h3>
+            <button class="close-btn" @click=${this._closeEditChoreModal} aria-label="Close dialog">
               <ha-icon icon="mdi:close"></ha-icon>
             </button>
           </div>
@@ -1270,9 +1361,12 @@ class SimpleChoresCard extends LitElement {
             </div>
           </div>
           <div class="modal-footer">
-            <button class="cancel-btn" @click=${this._closeEditChoreModal}>Cancel</button>
-            <button class="submit-btn" @click=${this._submitEditChore} 
-                    ?disabled=${!this._formData.chore.name?.trim() || !this._formData.chore.room?.trim()}>
+            <button class="cancel-btn" @click=${this._closeEditChoreModal} ?disabled=${this._isLoading}>Cancel</button>
+            <button
+              class="submit-btn ${this._isLoading ? 'loading' : ''}"
+              @click=${this._submitEditChore}
+              ?disabled=${!this._formData.chore.name?.trim() || !this._formData.chore.room?.trim() || this._isLoading}>
+              ${this._isLoading ? html`<span class="spinner"></span>` : ''}
               Update Chore
             </button>
           </div>
@@ -1312,17 +1406,14 @@ class SimpleChoresCard extends LitElement {
     const totalChoresSensor = this.hass.states["sensor.total_chores"];
     
     if (totalChoresSensor && totalChoresSensor.attributes && totalChoresSensor.attributes.chores) {
-    // Debug logging removed
       return totalChoresSensor.attributes.chores;
     }
     
     // Fallback: try the due chores if the sensor isn't available yet
-    // Debug logging removed
     const dueToday = this._getDueChores("today");
     const dueThisWeek = this._getDueChores("week");
     
     const fallbackChores = [...dueToday, ...dueThisWeek];
-    // Debug logging removed
     
     return fallbackChores;
   }
@@ -1337,10 +1428,10 @@ class SimpleChoresCard extends LitElement {
 
     return html`
       <div class="modal-overlay" @click=${this._closeAllChoresModal}>
-        <div class="modal-content large-modal" @click=${(e) => e.stopPropagation()}>
+        <div class="modal-content large-modal" role="dialog" aria-modal="true" aria-labelledby="all-chores-title" @click=${(e) => e.stopPropagation()}>
           <div class="modal-header">
-            <h3>All Active Chores (${allChores.length})</h3>
-            <button class="close-btn" @click=${this._closeAllChoresModal}>
+            <h3 id="all-chores-title">All Active Chores (${allChores.length})</h3>
+            <button class="close-btn" @click=${this._closeAllChoresModal} aria-label="Close dialog">
               <ha-icon icon="mdi:close"></ha-icon>
             </button>
           </div>
@@ -1443,7 +1534,6 @@ class SimpleChoresCard extends LitElement {
 
   // Modal action methods that close the all chores modal before performing actions
   _editChoreFromModal(chore) {
-    // Debug logging removed
     
     // Handle room ID properly - some might be room names instead of IDs
     let roomId = chore.room_id || chore.room || "";
@@ -1454,7 +1544,6 @@ class SimpleChoresCard extends LitElement {
       const roomByName = rooms.find(r => r.name === roomId);
       if (roomByName) {
         roomId = roomByName.id;
-    // Debug logging removed
       }
     }
     
@@ -1468,7 +1557,6 @@ class SimpleChoresCard extends LitElement {
       assignedTo: chore.assigned_to || ""
     };
     
-    // Debug logging removed
     
     // Direct modal swap - close one and open the other simultaneously
     this._showAllChoresModal = false;
@@ -1482,14 +1570,12 @@ class SimpleChoresCard extends LitElement {
       
       if (roomSelect) {
         roomSelect.value = this._formData.chore.room;
-    // Debug logging removed
       }
       
       if (assignSelect) {
         assignSelect.value = this._formData.chore.assignedTo || "";
-    // Debug logging removed
       }
-    }, 100);
+    }, this.constructor.constants.MODAL_FOCUS_DELAY);
   }
 
   async _deleteChoreFromModal(choreId, choreName) {
@@ -1520,120 +1606,17 @@ class SimpleChoresCard extends LitElement {
     const totalChoresSensor = this.hass.states["sensor.total_chores"];
     
     if (totalChoresSensor && totalChoresSensor.attributes && totalChoresSensor.attributes.chores) {
-    // Debug logging removed
       return totalChoresSensor.attributes.chores;
     }
     
     // Fallback: try the due chores if the sensor isn't available yet
-    // Debug logging removed
     const dueToday = this._getDueChores("today");
     const dueThisWeek = this._getDueChores("week");
     
     const fallbackChores = [...dueToday, ...dueThisWeek];
-    // Debug logging removed
     
     return fallbackChores;
   }
-
-  _renderAllChoresModal() {
-    if (!this._showAllChoresModal) {
-      return html``;
-    }
-
-    const allChores = this._getAllChores();
-    const rooms = this._getRooms();
-
-    return html`
-      <div class="modal-overlay" @click=${this._closeAllChoresModal}>
-        <div class="modal-content large-modal" @click=${(e) => e.stopPropagation()}>
-          <div class="modal-header">
-            <h3>All Active Chores (${allChores.length})</h3>
-            <button class="close-btn" @click=${this._closeAllChoresModal}>
-              <ha-icon icon="mdi:close"></ha-icon>
-            </button>
-          </div>
-          <div class="modal-body">
-            ${allChores.length === 0 ? html`
-              <div class="no-chores">
-                <p>No active chores found.</p>
-                <p>Create your first chore using the + button in the header!</p>
-              </div>
-            ` : html`
-              <div class="all-chores-list">
-                ${allChores.map(chore => {
-                  const dueDate = chore.next_due || chore.due_date;
-                  
-                  // Use consolidated room lookup logic
-                  const roomName = this._resolveRoomName(chore, rooms);
-                  
-                  // Get assigned user info
-                  const assignedTo = chore.assigned_to;
-                  let assignedUserName = null;
-                  if (assignedTo) {
-                    const users = this._getUsers();
-                    const assignedUser = users.find(u => u.id === assignedTo);
-                    assignedUserName = assignedUser ? assignedUser.name : assignedTo;
-                  }
-                  
-                  const isOverdue = new Date(dueDate) < new Date().setHours(0,0,0,0);
-                  
-                  return html`
-                    <div class="chore-item ${isOverdue ? 'overdue' : ''}">
-                      <div class="chore-info">
-                        <span class="chore-name">${chore.name}</span>
-                        <span class="chore-separator">•</span>
-                        <span class="chore-room">${roomName}</span>
-                        <span class="chore-separator">•</span>
-                        <span class="chore-due">Due: ${this._formatDate(dueDate)}</span>
-                        <span class="chore-separator">•</span>
-                        <span class="chore-frequency">${chore.frequency || 'Unknown'}</span>
-                        ${assignedUserName ? html`
-                          <span class="chore-separator">•</span>
-                          <span class="chore-assigned">👤 ${assignedUserName}</span>
-                        ` : ''}
-                      </div>
-                      <div class="chore-actions">
-                        <button 
-                          @click=${() => this._editChoreFromModal(chore)}
-                          class="action-btn edit-btn"
-                          title="Edit Chore"
-                        >
-                          ✏️ Edit
-                        </button>
-                        <button 
-                          @click=${() => this._deleteChoreFromModal(chore.id, chore.name)}
-                          class="action-btn delete-btn"
-                          title="Delete Chore"
-                        >
-                          🗑️ Delete
-                        </button>
-                        <button 
-                          @click=${() => this._openCompleteChoreModalFromAllChores(chore)}
-                          class="action-btn complete-btn"
-                        >
-                          ✓ Complete
-                        </button>
-                        <button 
-                          @click=${() => this._skipChoreFromModal(chore.id)} 
-                          class="action-btn skip-btn"
-                        >
-                          ⏭ Skip
-                        </button>
-                      </div>
-                    </div>
-                  `;
-                })}
-              </div>
-            `}
-          </div>
-          <div class="modal-footer">
-            <button class="submit-btn" @click=${this._closeAllChoresModal}>Close</button>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
 
   _openCompleteChoreModal(chore) {
     // Try to get current user ID from Home Assistant context
@@ -1644,7 +1627,6 @@ class SimpleChoresCard extends LitElement {
         currentUserId = this.hass.user.id;
       }
     } catch (e) {
-    // Debug logging removed
     }
 
     this._formData.completion = {
@@ -1654,6 +1636,12 @@ class SimpleChoresCard extends LitElement {
       reassignTo: chore.assigned_to || "" // Keep current assignment by default
     };
     this._showCompleteChoreModal = true;
+
+    // Focus first select after modal renders
+    setTimeout(() => {
+      const select = this.shadowRoot.querySelector('#completed-by');
+      if (select) select.focus();
+    }, this.constructor.constants.MODAL_FOCUS_DELAY);
   }
 
   _openCompleteChoreModalFromAllChores(chore) {
@@ -1664,7 +1652,6 @@ class SimpleChoresCard extends LitElement {
         currentUserId = this.hass.user.id;
       }
     } catch (e) {
-    // Debug logging removed
     }
 
     this._formData.completion = {
@@ -1675,6 +1662,12 @@ class SimpleChoresCard extends LitElement {
     };
     this._showAllChoresModal = false;
     this._showCompleteChoreModal = true;
+
+    // Focus first select after modal renders
+    setTimeout(() => {
+      const select = this.shadowRoot.querySelector('#completed-by');
+      if (select) select.focus();
+    }, this.constructor.constants.MODAL_FOCUS_DELAY);
   }
 
   _closeCompleteChoreModal() {
@@ -1699,6 +1692,7 @@ class SimpleChoresCard extends LitElement {
       return;
     }
 
+    this._isLoading = true;
     try {
       const choreData = this._formData.chore;
       const serviceData = {
@@ -1716,16 +1710,15 @@ class SimpleChoresCard extends LitElement {
       if (choreData.assignedTo?.trim()) {
         serviceData.assigned_to = choreData.assignedTo.trim();
       }
-      
-    // Debug logging removed
-    // Debug logging removed
 
       await this.hass.callService("simple_chores", "add_chore", serviceData);
       this._showToast("Chore created successfully!");
       this._closeAddChoreModal();
     } catch (error) {
       console.error("Simple Chores Card: Error creating chore:", error);
-      this._showToast("Error creating chore. Please try again.");
+      this._showToast(this._parseErrorMessage(error, "creating chore"));
+    } finally {
+      this._isLoading = false;
     }
   }
 
@@ -1736,6 +1729,7 @@ class SimpleChoresCard extends LitElement {
       return;
     }
 
+    this._isLoading = true;
     try {
       const choreData = this._formData.chore;
       const serviceData = {
@@ -1760,7 +1754,9 @@ class SimpleChoresCard extends LitElement {
       this._closeEditChoreModal();
     } catch (error) {
       console.error("Simple Chores Card: Error updating chore:", error);
-      this._showToast("Error updating chore. Please try again.");
+      this._showToast(this._parseErrorMessage(error, "updating chore"));
+    } finally {
+      this._isLoading = false;
     }
   }
 
@@ -1783,6 +1779,7 @@ class SimpleChoresCard extends LitElement {
       return;
     }
 
+    this._isLoading = true;
     try {
       const completionData = this._formData.completion;
       const serviceData = {
@@ -1790,17 +1787,15 @@ class SimpleChoresCard extends LitElement {
         user_id: completionData.completedBy
       };
 
-    // Debug logging removed
 
       await this.hass.callService("simple_chores", "complete_chore", serviceData);
-      
+
       // If reassignment is requested, update the chore assignment
       if (completionData.reassignTo !== undefined) {
         const reassignData = {
           chore_id: completionData.choreId,
           assigned_to: completionData.reassignTo || null
         };
-    // Debug logging removed
         await this.hass.callService("simple_chores", "update_chore", reassignData);
       }
 
@@ -1809,6 +1804,8 @@ class SimpleChoresCard extends LitElement {
     } catch (error) {
       console.error("Simple Chores Card: Error completing chore:", error);
       this._showToast("Error completing chore. Please try again.");
+    } finally {
+      this._isLoading = false;
     }
   }
 
@@ -1865,10 +1862,10 @@ class SimpleChoresCard extends LitElement {
 
     return html`
       <div class="modal-overlay" @click=${this._closeHistoryModal}>
-        <div class="modal-content large-modal" @click=${(e) => e.stopPropagation()}>
+        <div class="modal-content large-modal" role="dialog" aria-modal="true" aria-labelledby="history-title" @click=${(e) => e.stopPropagation()}>
           <div class="modal-header">
-            <h3>📊 Completion History (${history.length})</h3>
-            <button class="close-btn" @click=${this._closeHistoryModal}>
+            <h3 id="history-title">📊 Completion History (${history.length})</h3>
+            <button class="close-btn" @click=${this._closeHistoryModal} aria-label="Close dialog">
               <ha-icon icon="mdi:close"></ha-icon>
             </button>
           </div>
@@ -1918,10 +1915,10 @@ class SimpleChoresCard extends LitElement {
 
     return html`
       <div class="modal-overlay" @click=${this._closeCompleteChoreModal}>
-        <div class="modal-content" @click=${(e) => e.stopPropagation()}>
+        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="complete-chore-title" @click=${(e) => e.stopPropagation()}>
           <div class="modal-header">
-            <h3>✓ Complete Chore</h3>
-            <button class="close-btn" @click=${this._closeCompleteChoreModal}>
+            <h3 id="complete-chore-title">✓ Complete Chore</h3>
+            <button class="close-btn" @click=${this._closeCompleteChoreModal} aria-label="Close dialog">
               <ha-icon icon="mdi:close"></ha-icon>
             </button>
           </div>
@@ -1963,12 +1960,12 @@ class SimpleChoresCard extends LitElement {
             </div>
           </div>
           <div class="modal-footer">
-            <button class="cancel-btn" @click=${this._closeCompleteChoreModal}>Cancel</button>
-            <button 
-              class="submit-btn" 
+            <button class="cancel-btn" @click=${this._closeCompleteChoreModal} ?disabled=${this._isLoading}>Cancel</button>
+            <button
+              class="submit-btn ${this._isLoading ? 'loading' : ''}"
               @click=${this._submitCompleteChore}
-              ?disabled=${!this._formData.completion.completedBy?.trim()}
-            >
+              ?disabled=${!this._formData.completion.completedBy?.trim() || this._isLoading}>
+              ${this._isLoading ? html`<span class="spinner"></span>` : ''}
               ✓ Mark Complete
             </button>
           </div>
@@ -1990,17 +1987,56 @@ class SimpleChoresCard extends LitElement {
   }
 
   async _deleteChore(choreId, choreName) {
-    if (confirm(`Are you sure you want to delete "${choreName}"?`)) {
-      try {
-        await this.hass.callService("simple_chores", "remove_chore", {
-          chore_id: choreId
-        });
-        this._showToast("Chore deleted successfully!");
-      } catch (error) {
-        console.error("Simple Chores Card: Error deleting chore:", error);
-        this._showToast("Error deleting chore. Please try again.");
-      }
+    if (!confirm(`Are you sure you want to delete "${choreName}"?`)) {
+      return;
     }
+
+    this._isLoading = true;
+    try {
+      await this.hass.callService("simple_chores", "remove_chore", {
+        chore_id: choreId
+      });
+      this._showToast("Chore deleted successfully!");
+    } catch (error) {
+      console.error("Simple Chores Card: Error deleting chore:", error);
+      this._showToast("Error deleting chore. Please try again.");
+    } finally {
+      this._isLoading = false;
+    }
+  }
+
+  _parseErrorMessage(error, action) {
+    /**
+     * Parse error messages to provide specific, actionable feedback.
+     * @param {Error} error - The error object
+     * @param {string} action - The action being performed (e.g., "creating chore")
+     * @returns {string} User-friendly error message
+     */
+    let message = `Error ${action}. `;
+
+    if (error && error.message) {
+      const errorMsg = error.message.toLowerCase();
+
+      // Parse specific error types
+      if (errorMsg.includes("does not exist") || errorMsg.includes("not found")) {
+        message += "The selected room no longer exists. Please select a different room.";
+      } else if (errorMsg.includes("too long")) {
+        message += "Name is too long. Please use a shorter name.";
+      } else if (errorMsg.includes("empty") || errorMsg.includes("required")) {
+        message += "Please fill in all required fields.";
+      } else if (errorMsg.includes("invalid") && errorMsg.includes("room")) {
+        message += "Invalid room selected. Please choose a valid room.";
+      } else if (errorMsg.includes("frequency")) {
+        message += "Invalid frequency. Please select a valid frequency.";
+      } else {
+        // Use the actual error message if it's user-friendly
+        message += error.message;
+      }
+    } else {
+      message += "Please try again or check your input.";
+    }
+
+    return message;
   }
 
   _showToast(message) {
@@ -2030,10 +2066,16 @@ class SimpleChoresCard extends LitElement {
 
   static get styles() {
     return css`
+      /* ============================================
+         BASE & LAYOUT
+         ============================================ */
       :host {
         display: block;
       }
-      
+
+      /* ============================================
+         HEADER & CONTROLS
+         ============================================ */
       .card-header {
         padding: 16px;
         border-bottom: 1px solid var(--divider-color);
@@ -2083,11 +2125,15 @@ class SimpleChoresCard extends LitElement {
         color: var(--text-primary-color);
         font-size: 14px;
       }
-      
+
+
+      /* ============================================
+         CONTENT & STATS
+         ============================================ */
       .card-content {
         padding: 16px;
       }
-      
+
       .stats {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
@@ -2161,7 +2207,10 @@ class SimpleChoresCard extends LitElement {
         padding-bottom: 8px;
         border-bottom: 2px solid var(--primary-color);
       }
-      
+
+      /* ============================================
+         CHORE LISTS & ITEMS
+         ============================================ */
       .chore-list {
         display: flex;
         flex-direction: column;
@@ -2233,7 +2282,10 @@ class SimpleChoresCard extends LitElement {
         --mdc-button-height: 36px;
         font-size: 0.9em;
       }
-      
+
+      /* ============================================
+         BUTTONS & ACTIONS
+         ============================================ */
       .action-btn {
         padding: 8px 12px;
         border: 1px solid var(--divider-color);
@@ -2280,7 +2332,9 @@ class SimpleChoresCard extends LitElement {
         border-radius: 8px;
       }
 
-      /* Modal Styles */
+      /* ============================================
+         MODALS & DIALOGS
+         ============================================ */
       .modal-overlay {
         position: fixed;
         top: 0;
@@ -2427,7 +2481,10 @@ class SimpleChoresCard extends LitElement {
       .modal-body {
         padding: 0 20px 20px 20px;
       }
-      
+
+      /* ============================================
+         FORM ELEMENTS
+         ============================================ */
       .form-group {
         margin-bottom: 20px;
       }
@@ -2621,6 +2678,32 @@ class SimpleChoresCard extends LitElement {
         opacity: 0.6;
       }
 
+      /* Loading spinner styles */
+      .spinner {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        border-radius: 50%;
+        border-top-color: white;
+        animation: spin 0.8s linear infinite;
+        margin-right: 8px;
+        vertical-align: middle;
+      }
+
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+
+      .submit-btn.loading {
+        position: relative;
+        pointer-events: none;
+        opacity: 0.7;
+      }
+
+      /* ============================================
+         RESPONSIVE DESIGN
+         ============================================ */
       @media (max-width: 600px) {
         .chore-item {
           flex-direction: column;

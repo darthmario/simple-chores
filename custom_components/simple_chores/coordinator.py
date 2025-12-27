@@ -131,7 +131,7 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "due_this_week_count": len(due_this_week),
             "overdue": overdue,
             "overdue_count": len(overdue),
-            "has_overdue": len(overdue) > 0,
+            "has_overdue": bool(overdue),
             "by_room": by_room,
             "rooms": all_rooms,
             "chores": list(self.store.chores.values()),

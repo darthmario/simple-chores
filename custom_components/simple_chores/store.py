@@ -188,6 +188,13 @@ class SimpleChoresStore:
         if not room_id or not room_id.strip():
             raise ValueError("Room ID cannot be empty")
 
+        # Validate room ID format
+        if not (room_id.startswith("area_") or room_id.startswith("custom_")):
+            raise ValueError(
+                f"Invalid room ID format: {room_id}. "
+                "Room IDs must start with 'area_' (Home Assistant areas) or 'custom_' (custom rooms)"
+            )
+
         # Normalize frequency to lowercase for case-insensitive comparison
         frequency = frequency.lower()
         if frequency not in FREQUENCIES:
@@ -230,6 +237,14 @@ class SimpleChoresStore:
             frequency = frequency.lower()
             if frequency not in FREQUENCIES:
                 raise ValueError(f"Invalid frequency: {frequency}. Must be one of: {FREQUENCIES}")
+
+        # Validate room ID format if provided
+        if room_id is not None:
+            if not (room_id.startswith("area_") or room_id.startswith("custom_")):
+                raise ValueError(
+                    f"Invalid room ID format: {room_id}. "
+                    "Room IDs must start with 'area_' or 'custom_'"
+                )
 
         chore = self._data["chores"][chore_id]
         if name is not None:
