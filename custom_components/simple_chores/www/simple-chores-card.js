@@ -233,7 +233,12 @@ class SimpleChoresCard extends LitElement {
     this.requestUpdate();
   }
 
-  // Enhanced form validation with user-friendly messages
+  /**
+   * Validates a form by checking required fields.
+   * @param {string} formType - The type of form ('chore', 'room', 'completion')
+   * @param {string[]} requiredFields - Array of field names that must be filled
+   * @returns {{valid: boolean, message?: string}} Validation result with error message if invalid
+   */
   _validateForm(formType, requiredFields = []) {
     const formData = this._formData[formType];
     if (!formData) {
@@ -592,6 +597,11 @@ class SimpleChoresCard extends LitElement {
     return processedChores;
   }
 
+  /**
+   * Retrieves the list of Home Assistant users.
+   * Uses caching to minimize sensor lookups. Falls back to auth registry if available.
+   * @returns {Array<{id: string, name: string}>} Array of user objects
+   */
   _getUsers() {
     if (!this.hass) return [];
     
@@ -642,6 +652,11 @@ class SimpleChoresCard extends LitElement {
     return users;
   }
 
+  /**
+   * Retrieves the list of rooms (both HA Areas and custom rooms).
+   * Uses caching to minimize sensor lookups.
+   * @returns {Array<{id: string, name: string, icon: string, is_custom: boolean}>} Array of room objects
+   */
   _getRooms() {
     if (!this.hass) return [];
     
@@ -802,6 +817,10 @@ class SimpleChoresCard extends LitElement {
     this.dispatchEvent(event);
   }
 
+  /**
+   * Opens the Add Room modal and resets the room form.
+   * Automatically focuses the room name input field after rendering.
+   */
   _openAddRoomModal() {
     this._showAddRoomModal = true;
     this._resetForm('room');
@@ -813,6 +832,9 @@ class SimpleChoresCard extends LitElement {
     }, this.constructor.constants.MODAL_FOCUS_DELAY);
   }
 
+  /**
+   * Closes the Add Room modal and resets the room form.
+   */
   _closeAddRoomModal() {
     this._showAddRoomModal = false;
     this._resetForm('room');
@@ -830,6 +852,12 @@ class SimpleChoresCard extends LitElement {
     this._handleFormInput('room', 'icon', icon);
   }
 
+  /**
+   * Submits the Add Room form.
+   * Validates the room name, checks for duplicates, and creates a new custom room.
+   * Displays loading state and success/error messages.
+   * @returns {Promise<void>}
+   */
   async _submitAddRoom() {
     const validation = this._validateForm('room', ['name']);
     if (!validation.valid) {
@@ -1685,6 +1713,12 @@ class SimpleChoresCard extends LitElement {
 
 
   // Service calling methods
+  /**
+   * Submits the Add Chore form.
+   * Validates required fields, creates a new chore with the specified details.
+   * Displays loading state and success/error messages.
+   * @returns {Promise<void>}
+   */
   async _submitAddChore() {
     const validation = this._validateForm('chore', ['name', 'room']);
     if (!validation.valid) {
@@ -1722,6 +1756,12 @@ class SimpleChoresCard extends LitElement {
     }
   }
 
+  /**
+   * Submits the Edit Chore form.
+   * Validates required fields and updates an existing chore with new details.
+   * Displays loading state and success/error messages.
+   * @returns {Promise<void>}
+   */
   async _submitEditChore() {
     const validation = this._validateForm('chore', ['name', 'room']);
     if (!validation.valid) {
@@ -1772,6 +1812,12 @@ class SimpleChoresCard extends LitElement {
     }
   }
 
+  /**
+   * Submits the Complete Chore form.
+   * Marks a chore as complete by the specified user and optionally reassigns it.
+   * Displays loading state and success/error messages.
+   * @returns {Promise<void>}
+   */
   async _submitCompleteChore() {
     const validation = this._validateForm('completion', ['completedBy']);
     if (!validation.valid) {
