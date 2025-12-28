@@ -145,6 +145,21 @@ class SimpleChoresCard extends LitElement {
       { icon: 'mdi:stairs', label: 'Stairs/Hallway' },
     ];
 
+    this._commonUserAvatars = [
+      { icon: 'mdi:account', label: 'Default' },
+      { icon: 'mdi:account-child', label: 'Child' },
+      { icon: 'mdi:account-tie', label: 'Adult' },
+      { icon: 'mdi:face-woman', label: 'Woman' },
+      { icon: 'mdi:face-man', label: 'Man' },
+      { icon: 'mdi:baby-face', label: 'Baby' },
+      { icon: 'mdi:human-male-boy', label: 'Boy' },
+      { icon: 'mdi:human-female-girl', label: 'Girl' },
+      { icon: 'mdi:account-cowboy-hat', label: 'Custom 1' },
+      { icon: 'mdi:account-hard-hat', label: 'Custom 2' },
+      { icon: 'mdi:account-heart', label: 'Custom 3' },
+      { icon: 'mdi:account-star', label: 'Custom 4' },
+    ];
+
     // Bind keyboard handler for proper removal
     this._handleKeydown = this._handleKeydown.bind(this);
   }
@@ -299,6 +314,8 @@ class SimpleChoresCard extends LitElement {
   _resetForm(formType) {
     if (formType === 'room') {
       this._formData.room = { name: "", icon: "mdi:home" };
+    } else if (formType === 'user') {
+      this._formData.user = { id: "", name: "", avatar: "mdi:account" };
     } else if (formType === 'chore') {
       this._formData.chore = {
         id: "",
@@ -901,6 +918,10 @@ class SimpleChoresCard extends LitElement {
     this._handleFormInput('room', 'icon', icon);
   }
 
+  _selectUserAvatar(avatar) {
+    this._handleFormInput('user', 'avatar', avatar);
+  }
+
   /**
    * Submits the Add Room form.
    * Validates the room name, checks for duplicates, and creates a new custom room.
@@ -1328,15 +1349,35 @@ class SimpleChoresCard extends LitElement {
               <small>Name of the user (e.g., "John Doe")</small>
             </div>
             <div class="form-group">
-              <label for="user-avatar">Avatar Icon</label>
-              <input
-                type="text"
-                id="user-avatar"
-                .value=${this._formData.user.avatar}
-                @input=${(e) => this._handleFormInput('user', 'avatar', e.target.value)}
-                placeholder="mdi:account"
-              />
-              <small>Material Design Icon (e.g., mdi:account-child, mdi:account-tie)</small>
+              <label>Avatar Icon</label>
+              <div class="icon-picker">
+                <div class="icon-preview">
+                  <ha-icon icon="${this._formData.user.avatar || 'mdi:account'}"></ha-icon>
+                  <span>${this._formData.user.avatar || 'mdi:account'}</span>
+                </div>
+                <div class="icon-grid">
+                  ${this._commonUserAvatars.map(item => html`
+                    <button
+                      type="button"
+                      class="icon-option ${this._formData.user.avatar === item.icon ? 'selected' : ''}"
+                      @click=${() => this._selectUserAvatar(item.icon)}
+                      title="${item.label}"
+                    >
+                      <ha-icon icon="${item.icon}"></ha-icon>
+                      <span class="icon-label">${item.label}</span>
+                    </button>
+                  `)}
+                </div>
+                <div class="custom-icon-input">
+                  <small>Or enter a custom MDI icon:</small>
+                  <input
+                    type="text"
+                    .value=${this._formData.user.avatar}
+                    @input=${(e) => this._handleFormInput('user', 'avatar', e.target.value)}
+                    placeholder="mdi:account-custom"
+                  />
+                </div>
+              </div>
             </div>
           </div>
           <div class="modal-footer">
@@ -1437,15 +1478,35 @@ class SimpleChoresCard extends LitElement {
               />
             </div>
             <div class="form-group">
-              <label for="edit-user-avatar">Avatar Icon</label>
-              <input
-                type="text"
-                id="edit-user-avatar"
-                .value=${this._formData.user.avatar}
-                @input=${(e) => this._handleFormInput('user', 'avatar', e.target.value)}
-                placeholder="mdi:account"
-              />
-              <small>Material Design Icon</small>
+              <label>Avatar Icon</label>
+              <div class="icon-picker">
+                <div class="icon-preview">
+                  <ha-icon icon="${this._formData.user.avatar || 'mdi:account'}"></ha-icon>
+                  <span>${this._formData.user.avatar || 'mdi:account'}</span>
+                </div>
+                <div class="icon-grid">
+                  ${this._commonUserAvatars.map(item => html`
+                    <button
+                      type="button"
+                      class="icon-option ${this._formData.user.avatar === item.icon ? 'selected' : ''}"
+                      @click=${() => this._selectUserAvatar(item.icon)}
+                      title="${item.label}"
+                    >
+                      <ha-icon icon="${item.icon}"></ha-icon>
+                      <span class="icon-label">${item.label}</span>
+                    </button>
+                  `)}
+                </div>
+                <div class="custom-icon-input">
+                  <small>Or enter a custom MDI icon:</small>
+                  <input
+                    type="text"
+                    .value=${this._formData.user.avatar}
+                    @input=${(e) => this._handleFormInput('user', 'avatar', e.target.value)}
+                    placeholder="mdi:account-custom"
+                  />
+                </div>
+              </div>
             </div>
           </div>
           <div class="modal-footer">
@@ -2191,11 +2252,12 @@ class SimpleChoresCard extends LitElement {
 
       await this.hass.callService("simple_chores", "complete_chore", serviceData);
 
-      // If reassignment is requested, update the chore assignment
-      if (completionData.reassignTo !== undefined) {
+      // If reassignment is requested AND the value has changed, update the chore assignment
+      // Only update if reassignTo has an actual value (not empty string)
+      if (completionData.reassignTo !== undefined && completionData.reassignTo !== "") {
         const reassignData = {
           chore_id: completionData.choreId,
-          assigned_to: completionData.reassignTo || null
+          assigned_to: completionData.reassignTo
         };
         await this.hass.callService("simple_chores", "update_chore", reassignData);
       }
