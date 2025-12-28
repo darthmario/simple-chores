@@ -237,6 +237,9 @@ If you prefer the simple approach:
 - **Modal Workflows**: Clean, focused editing experiences
 - **Error Handling**: Helpful validation messages and error recovery
 - **Room Name Resolution**: Intelligent room ID to name mapping
+- **Keyboard Navigation**: Full keyboard support with ESC to close, Enter to submit
+- **Accessibility**: Complete ARIA labels and screen reader support
+- **Loading States**: Visual feedback during all async operations
 
 ## Room Types
 

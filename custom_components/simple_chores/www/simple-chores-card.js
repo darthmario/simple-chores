@@ -788,6 +788,25 @@ class SimpleChoresCard extends LitElement {
     return date.toLocaleDateString();
   }
 
+  /**
+   * Formats frequency values for display.
+   * @param {string} frequency - The frequency value
+   * @returns {string} Formatted frequency label
+   */
+  _formatFrequency(frequency) {
+    const frequencyLabels = {
+      daily: 'Daily',
+      weekly: 'Weekly',
+      biweekly: 'Bi-Weekly',
+      monthly: 'Monthly',
+      bimonthly: 'Bi-Monthly',
+      quarterly: 'Quarterly',
+      biannual: 'Bi-Annual',
+      yearly: 'Yearly'
+    };
+    return frequencyLabels[frequency] || frequency || 'Unknown';
+  }
+
   _roomChanged(e) {
     this._selectedRoom = e.target.value;
   }
@@ -1164,15 +1183,18 @@ class SimpleChoresCard extends LitElement {
             </div>
             <div class="form-group">
               <label for="chore-frequency">Frequency *</label>
-              <select 
+              <select
                 id="chore-frequency"
                 .value=${this._formData.chore.frequency}
                 @change=${this._handleChoreFrequencyInput}
               >
                 <option value="daily">Daily</option>
                 <option value="weekly">Weekly</option>
+                <option value="biweekly">Bi-Weekly (Every 2 weeks)</option>
                 <option value="monthly">Monthly</option>
-                <option value="quarterly">Quarterly</option>
+                <option value="bimonthly">Bi-Monthly (Every 2 months)</option>
+                <option value="quarterly">Quarterly (Every 3 months)</option>
+                <option value="biannual">Bi-Annual (Every 6 months)</option>
                 <option value="yearly">Yearly</option>
               </select>
             </div>
@@ -1351,15 +1373,18 @@ class SimpleChoresCard extends LitElement {
             </div>
             <div class="form-group">
               <label for="edit-chore-frequency">Frequency *</label>
-              <select 
+              <select
                 id="edit-chore-frequency"
                 .value=${this._formData.chore.frequency}
                 @change=${this._handleEditChoreFrequencyInput}
               >
                 <option value="daily">Daily</option>
                 <option value="weekly">Weekly</option>
+                <option value="biweekly">Bi-Weekly (Every 2 weeks)</option>
                 <option value="monthly">Monthly</option>
-                <option value="quarterly">Quarterly</option>
+                <option value="bimonthly">Bi-Monthly (Every 2 months)</option>
+                <option value="quarterly">Quarterly (Every 3 months)</option>
+                <option value="biannual">Bi-Annual (Every 6 months)</option>
                 <option value="yearly">Yearly</option>
               </select>
             </div>
@@ -1497,7 +1522,7 @@ class SimpleChoresCard extends LitElement {
                         <span class="chore-separator">•</span>
                         <span class="chore-due">Due: ${this._formatDate(dueDate)}</span>
                         <span class="chore-separator">•</span>
-                        <span class="chore-frequency">${chore.frequency || 'Unknown'}</span>
+                        <span class="chore-frequency">${this._formatFrequency(chore.frequency)}</span>
                         ${assignedUserName ? html`
                           <span class="chore-separator">•</span>
                           <span class="chore-assigned">👤 ${assignedUserName}</span>

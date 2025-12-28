@@ -84,6 +84,9 @@ default_room: all
 - **Frequency Badges**: Clear labels for daily/weekly/monthly/etc.
 - **Responsive Design**: Works great on desktop and mobile
 - **Error Handling**: Helpful validation messages and error recovery
+- **Keyboard Navigation**: Press ESC to close modals, Enter to submit forms
+- **Accessibility**: Full ARIA support and screen reader compatibility
+- **Loading States**: Clear visual feedback during all operations
 
 ## Modal Workflows
 

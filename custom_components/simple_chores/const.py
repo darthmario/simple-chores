@@ -10,15 +10,21 @@ STORAGE_KEY: Final = "simple_chores"
 # Frequencies
 FREQUENCY_DAILY: Final = "daily"
 FREQUENCY_WEEKLY: Final = "weekly"
+FREQUENCY_BIWEEKLY: Final = "biweekly"
 FREQUENCY_MONTHLY: Final = "monthly"
+FREQUENCY_BIMONTHLY: Final = "bimonthly"
 FREQUENCY_QUARTERLY: Final = "quarterly"
+FREQUENCY_BIANNUAL: Final = "biannual"
 FREQUENCY_YEARLY: Final = "yearly"
 
 FREQUENCIES: Final = [
     FREQUENCY_DAILY,
     FREQUENCY_WEEKLY,
+    FREQUENCY_BIWEEKLY,
     FREQUENCY_MONTHLY,
+    FREQUENCY_BIMONTHLY,
     FREQUENCY_QUARTERLY,
+    FREQUENCY_BIANNUAL,
     FREQUENCY_YEARLY,
 ]
 

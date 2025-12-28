@@ -12,6 +12,9 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import (
     DOMAIN,
+    FREQUENCY_BIANNUAL,
+    FREQUENCY_BIMONTHLY,
+    FREQUENCY_BIWEEKLY,
     FREQUENCY_DAILY,
     FREQUENCY_MONTHLY,
     FREQUENCY_QUARTERLY,
@@ -34,10 +37,16 @@ def calculate_next_due(from_date: date, frequency: str) -> date:
         return from_date + timedelta(days=1)
     if frequency == FREQUENCY_WEEKLY:
         return from_date + timedelta(weeks=1)
+    if frequency == FREQUENCY_BIWEEKLY:
+        return from_date + timedelta(weeks=2)
     if frequency == FREQUENCY_MONTHLY:
         return from_date + relativedelta(months=1)
+    if frequency == FREQUENCY_BIMONTHLY:
+        return from_date + relativedelta(months=2)
     if frequency == FREQUENCY_QUARTERLY:
         return from_date + relativedelta(months=3)
+    if frequency == FREQUENCY_BIANNUAL:
+        return from_date + relativedelta(months=6)
     if frequency == FREQUENCY_YEARLY:
         return from_date + relativedelta(years=1)
     return from_date
