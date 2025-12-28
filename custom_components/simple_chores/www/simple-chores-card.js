@@ -58,6 +58,9 @@ class SimpleChoresCard extends LitElement {
       // Individual modal states (kept for compatibility)
       _showAddRoomModal: { type: Boolean },
       _showManageRoomsModal: { type: Boolean },
+      _showAddUserModal: { type: Boolean },
+      _showManageUsersModal: { type: Boolean },
+      _showEditUserModal: { type: Boolean },
       _showAddChoreModal: { type: Boolean },
       _showEditChoreModal: { type: Boolean },
       _showAllChoresModal: { type: Boolean },
@@ -100,6 +103,9 @@ class SimpleChoresCard extends LitElement {
     // Individual modal states
     this._showAddRoomModal = false;
     this._showManageRoomsModal = false;
+    this._showAddUserModal = false;
+    this._showManageUsersModal = false;
+    this._showEditUserModal = false;
     this._showAddChoreModal = false;
     this._showEditChoreModal = false;
     this._showAllChoresModal = false;
@@ -162,6 +168,12 @@ class SimpleChoresCard extends LitElement {
         this._closeAddRoomModal();
       } else if (this._showManageRoomsModal) {
         this._closeManageRoomsModal();
+      } else if (this._showAddUserModal) {
+        this._closeAddUserModal();
+      } else if (this._showManageUsersModal) {
+        this._closeManageUsersModal();
+      } else if (this._showEditUserModal) {
+        this._closeEditUserModal();
       } else if (this._showAddChoreModal) {
         this._closeAddChoreModal();
       } else if (this._showEditChoreModal) {
@@ -186,6 +198,10 @@ class SimpleChoresCard extends LitElement {
         // Determine which modal is open and submit
         if (this._showAddRoomModal) {
           this._submitAddRoom();
+        } else if (this._showAddUserModal) {
+          this._submitAddUser();
+        } else if (this._showEditUserModal) {
+          this._submitEditUser();
         } else if (this._showAddChoreModal) {
           this._submitAddChore();
         } else if (this._showEditChoreModal) {
@@ -202,6 +218,11 @@ class SimpleChoresCard extends LitElement {
       room: {
         name: "",
         icon: "mdi:home"
+      },
+      user: {
+        id: "",
+        name: "",
+        avatar: "mdi:account"
       },
       chore: {
         id: "",
@@ -407,6 +428,12 @@ class SimpleChoresCard extends LitElement {
             <button class="manage-rooms-btn" @click=${this._openManageRoomsModal} title="Manage Rooms">
               <ha-icon icon="mdi:cog"></ha-icon>
             </button>
+            <button class="add-user-btn" @click=${this._openAddUserModal} title="Add Custom User">
+              <ha-icon icon="mdi:account-plus"></ha-icon>
+            </button>
+            <button class="manage-users-btn" @click=${this._openManageUsersModal} title="Manage Users">
+              <ha-icon icon="mdi:account-cog"></ha-icon>
+            </button>
             <button class="history-btn" @click=${this._openHistoryModal} title="View Completion History">
               <ha-icon icon="mdi:history"></ha-icon>
             </button>
@@ -424,6 +451,9 @@ class SimpleChoresCard extends LitElement {
         
         ${this._renderAddRoomModal()}
         ${this._renderManageRoomsModal()}
+        ${this._renderAddUserModal()}
+        ${this._renderManageUsersModal()}
+        ${this._renderEditUserModal()}
         ${this._renderAddChoreModal()}
         ${this._renderEditChoreModal()}
         ${this._renderAllChoresModal()}
@@ -1048,6 +1078,144 @@ class SimpleChoresCard extends LitElement {
     }
   }
 
+  // ===== User Management Methods =====
+
+  /**
+   * Opens the Add User modal and resets the user form.
+   * Automatically focuses the user name input field after rendering.
+   */
+  _openAddUserModal() {
+    this._showAddUserModal = true;
+    this._resetForm('user');
+
+    // Focus first input after modal renders
+    setTimeout(() => {
+      const input = this.shadowRoot.querySelector('#user-name');
+      if (input) input.focus();
+    }, this.constructor.constants.MODAL_FOCUS_DELAY);
+  }
+
+  _closeAddUserModal() {
+    this._showAddUserModal = false;
+    this._resetForm('user');
+  }
+
+  async _submitAddUser() {
+    // Validate form
+    const validation = this._validateForm('user', ['name']);
+    if (!validation.valid) {
+      this._showToast(validation.message);
+      return;
+    }
+
+    if (!this._showAddUserModal) {
+      return;
+    }
+
+    this._isLoading = true;
+    try {
+      await this.hass.callService("simple_chores", "add_user", {
+        name: this._formData.user.name.trim(),
+        avatar: this._formData.user.avatar || "mdi:account"
+      });
+
+      this._showToast(`User "${this._formData.user.name}" added successfully!`);
+      this._invalidateCache('users');
+      this._closeAddUserModal();
+      this.requestUpdate();
+    } catch (error) {
+      console.error("Simple Chores Card: Failed to add user:", error);
+      const message = this._parseErrorMessage(error, 'adding user');
+      this._showToast(message);
+    } finally {
+      this._isLoading = false;
+    }
+  }
+
+  _openManageUsersModal() {
+    this._showManageUsersModal = true;
+  }
+
+  _closeManageUsersModal() {
+    this._showManageUsersModal = false;
+  }
+
+  async _deleteUser(userId, userName) {
+    if (!confirm(`Are you sure you want to delete the user "${userName}"? Chores assigned to this user will remain but show the user ID instead.`)) {
+      return;
+    }
+
+    this._isLoading = true;
+    try {
+      await this.hass.callService("simple_chores", "remove_user", {
+        user_id: userId
+      });
+
+      this._showToast(`User "${userName}" deleted successfully!`);
+      // Invalidate user cache since we deleted a user
+      this._invalidateCache('users');
+      this.requestUpdate();
+    } catch (error) {
+      console.error("Simple Chores Card: Failed to delete user:", error);
+      this._showToast(`Error deleting user: ${error.message}`);
+    } finally {
+      this._isLoading = false;
+    }
+  }
+
+  _openEditUserModal(user) {
+    this._formData.user = {
+      id: user.id,
+      name: user.name,
+      avatar: user.avatar || "mdi:account"
+    };
+    this._showEditUserModal = true;
+
+    // Focus first input after modal renders
+    setTimeout(() => {
+      const input = this.shadowRoot.querySelector('#edit-user-name');
+      if (input) input.focus();
+    }, this.constructor.constants.MODAL_FOCUS_DELAY);
+  }
+
+  _closeEditUserModal() {
+    this._showEditUserModal = false;
+    this._resetForm('user');
+  }
+
+  async _submitEditUser() {
+    // Validate form
+    const validation = this._validateForm('user', ['id', 'name']);
+    if (!validation.valid) {
+      this._showToast(validation.message);
+      return;
+    }
+
+    if (!this._showEditUserModal) {
+      return;
+    }
+
+    this._isLoading = true;
+    try {
+      await this.hass.callService("simple_chores", "update_user", {
+        user_id: this._formData.user.id,
+        name: this._formData.user.name.trim(),
+        avatar: this._formData.user.avatar || "mdi:account"
+      });
+
+      this._showToast(`User "${this._formData.user.name}" updated successfully!`);
+      this._invalidateCache('users');
+      this._closeEditUserModal();
+      this.requestUpdate();
+    } catch (error) {
+      console.error("Simple Chores Card: Failed to update user:", error);
+      const message = this._parseErrorMessage(error, 'updating user');
+      this._showToast(message);
+    } finally {
+      this._isLoading = false;
+    }
+  }
+
   _renderManageRoomsModal() {
     if (!this._showManageRoomsModal) {
       return html``;
@@ -1132,6 +1300,168 @@ class SimpleChoresCard extends LitElement {
     this._handleFormInput('chore', 'assignedTo', e.target.value);
   }
 
+  _renderAddUserModal() {
+    if (!this._showAddUserModal) {
+      return html``;
+    }
+
+    return html`
+      <div class="modal-overlay" @click=${this._closeAddUserModal}>
+        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="add-user-title" @click=${(e) => e.stopPropagation()}>
+          <div class="modal-header">
+            <h3 id="add-user-title">Add Custom User</h3>
+            <button class="close-btn" @click=${this._closeAddUserModal} aria-label="Close dialog">
+              <ha-icon icon="mdi:close"></ha-icon>
+            </button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label for="user-name">Name *</label>
+              <input
+                type="text"
+                id="user-name"
+                .value=${this._formData.user.name}
+                @input=${(e) => this._handleFormInput('user', 'name', e.target.value)}
+                placeholder="Enter user name"
+                required
+              />
+              <small>Name of the user (e.g., "John Doe")</small>
+            </div>
+            <div class="form-group">
+              <label for="user-avatar">Avatar Icon</label>
+              <input
+                type="text"
+                id="user-avatar"
+                .value=${this._formData.user.avatar}
+                @input=${(e) => this._handleFormInput('user', 'avatar', e.target.value)}
+                placeholder="mdi:account"
+              />
+              <small>Material Design Icon (e.g., mdi:account-child, mdi:account-tie)</small>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="cancel-btn" @click=${this._closeAddUserModal} ?disabled=${this._isLoading}>Cancel</button>
+            <button
+              class="submit-btn ${this._isLoading ? 'loading' : ''}"
+              @click=${this._submitAddUser}
+              ?disabled=${!this._formData.user.name?.trim() || this._isLoading}>
+              ${this._isLoading ? html`<span class="spinner"></span>` : ''}
+              Add User
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderManageUsersModal() {
+    if (!this._showManageUsersModal) {
+      return html``;
+    }
+
+    const users = this._getUsers();
+    const customUsers = users.filter(user => user.is_custom);
+
+    return html`
+      <div class="modal-overlay" @click=${this._closeManageUsersModal}>
+        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="manage-users-title" @click=${(e) => e.stopPropagation()}>
+          <div class="modal-header">
+            <h3 id="manage-users-title">Manage Custom Users</h3>
+            <button class="close-btn" @click=${this._closeManageUsersModal} aria-label="Close dialog">
+              <ha-icon icon="mdi:close"></ha-icon>
+            </button>
+          </div>
+          <div class="modal-body">
+            ${customUsers.length === 0 ? html`
+              <p class="no-custom-users">No custom users found. Use the + button to add users.</p>
+            ` : html`
+              <div class="user-list">
+                ${customUsers.map(user => html`
+                  <div class="user-item">
+                    <div class="user-info">
+                      <ha-icon icon="${user.avatar || 'mdi:account'}"></ha-icon>
+                      <span class="user-name">${user.name}</span>
+                    </div>
+                    <div class="user-actions">
+                      <button
+                        class="edit-user-btn"
+                        @click=${() => this._openEditUserModal(user)}
+                        title="Edit User"
+                      >
+                        <ha-icon icon="mdi:pencil"></ha-icon>
+                      </button>
+                      <button
+                        class="delete-user-btn"
+                        @click=${() => this._deleteUser(user.id, user.name)}
+                        title="Delete User"
+                      >
+                        <ha-icon icon="mdi:delete"></ha-icon>
+                      </button>
+                    </div>
+                  </div>
+                `)}
+              </div>
+            `}
+          </div>
+          <div class="modal-footer">
+            <button class="cancel-btn" @click=${this._closeManageUsersModal}>Close</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderEditUserModal() {
+    if (!this._showEditUserModal) {
+      return html``;
+    }
+
+    return html`
+      <div class="modal-overlay" @click=${this._closeEditUserModal}>
+        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="edit-user-title" @click=${(e) => e.stopPropagation()}>
+          <div class="modal-header">
+            <h3 id="edit-user-title">Edit User</h3>
+            <button class="close-btn" @click=${this._closeEditUserModal} aria-label="Close dialog">
+              <ha-icon icon="mdi:close"></ha-icon>
+            </button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label for="edit-user-name">Name *</label>
+              <input
+                type="text"
+                id="edit-user-name"
+                .value=${this._formData.user.name}
+                @input=${(e) => this._handleFormInput('user', 'name', e.target.value)}
+                required
+              />
+            </div>
+            <div class="form-group">
+              <label for="edit-user-avatar">Avatar Icon</label>
+              <input
+                type="text"
+                id="edit-user-avatar"
+                .value=${this._formData.user.avatar}
+                @input=${(e) => this._handleFormInput('user', 'avatar', e.target.value)}
+                placeholder="mdi:account"
+              />
+              <small>Material Design Icon</small>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="cancel-btn" @click=${this._closeEditUserModal} ?disabled=${this._isLoading}>Cancel</button>
+            <button
+              class="submit-btn ${this._isLoading ? 'loading' : ''}"
+              @click=${this._submitEditUser}
+              ?disabled=${!this._formData.user.name?.trim() || this._isLoading}>
+              ${this._isLoading ? html`<span class="spinner"></span>` : ''}
+              Update User
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
 
   _renderAddChoreModal() {
     if (!this._showAddChoreModal) {

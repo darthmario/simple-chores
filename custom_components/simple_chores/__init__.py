@@ -17,6 +17,7 @@ from homeassistant.helpers.event import async_track_time_change
 
 from .const import (
     ATTR_ASSIGNED_TO,
+    ATTR_AVATAR,
     ATTR_CHORE_ID,
     ATTR_CHORE_NAME,
     ATTR_FREQUENCY,
@@ -26,6 +27,7 @@ from .const import (
     ATTR_ROOM_NAME,
     ATTR_START_DATE,
     ATTR_USER_ID,
+    ATTR_USER_NAME,
     CONF_NOTIFICATION_TIME,
     CONF_NOTIFICATIONS_ENABLED,
     CONF_NOTIFY_TARGETS,
@@ -35,15 +37,18 @@ from .const import (
     FREQUENCIES,
     SERVICE_ADD_CHORE,
     SERVICE_ADD_ROOM,
+    SERVICE_ADD_USER,
     SERVICE_COMPLETE_CHORE,
     SERVICE_GET_HISTORY,
     SERVICE_GET_USER_STATS,
     SERVICE_REMOVE_CHORE,
     SERVICE_REMOVE_ROOM,
+    SERVICE_REMOVE_USER,
     SERVICE_SEND_NOTIFICATION,
     SERVICE_SKIP_CHORE,
     SERVICE_UPDATE_CHORE,
     SERVICE_UPDATE_ROOM,
+    SERVICE_UPDATE_USER,
 )
 from .coordinator import SimpleChoresCoordinator
 from .store import SimpleChoresStore
@@ -76,6 +81,27 @@ SERVICE_UPDATE_ROOM_SCHEMA = vol.Schema(
         vol.Required(ATTR_ROOM_ID): cv.string,
         vol.Optional(ATTR_ROOM_NAME): cv.string,
         vol.Optional(ATTR_ICON): cv.string,
+    }
+)
+
+SERVICE_ADD_USER_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_USER_NAME): cv.string,
+        vol.Optional(ATTR_AVATAR): cv.string,
+    }
+)
+
+SERVICE_REMOVE_USER_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_USER_ID): cv.string,
+    }
+)
+
+SERVICE_UPDATE_USER_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_USER_ID): cv.string,
+        vol.Optional(ATTR_USER_NAME): cv.string,
+        vol.Optional(ATTR_AVATAR): cv.string,
     }
 )
 
@@ -221,7 +247,36 @@ class ServiceHandlerFactory:
                 raise HomeAssistantError(f"Failed to {operation} room: {e}") from e
 
         return handler
-    
+
+    def create_user_handler(self, operation: str) -> Callable[[ServiceCall], Awaitable[None]]:
+        """Create a user operation handler."""
+        async def handler(call: ServiceCall) -> None:
+            try:
+                user_id = call.data.get(ATTR_USER_ID)
+                name = call.data.get(ATTR_USER_NAME)
+                avatar = call.data.get(ATTR_AVATAR)
+
+                if operation == "add":
+                    await self.coordinator.async_add_user(name, avatar)
+                    _LOGGER.info("Successfully added custom user: %s", name)
+                elif operation == "remove":
+                    await self.coordinator.async_remove_user(user_id)
+                    _LOGGER.info("Successfully removed custom user: %s", user_id)
+                elif operation == "update":
+                    await self.coordinator.async_update_user(user_id, name, avatar)
+                    _LOGGER.info("Successfully updated custom user: %s", user_id)
+            except ValueError as e:
+                _LOGGER.error("Validation error in %s_user: %s", operation, e)
+                raise HomeAssistantError(f"Invalid input: {e}") from e
+            except KeyError as e:
+                _LOGGER.error("Missing required field in %s_user: %s", operation, e)
+                raise HomeAssistantError(f"Missing required field: {e}") from e
+            except Exception as e:
+                _LOGGER.exception("Unexpected error in %s_user", operation)
+                raise HomeAssistantError(f"Failed to {operation} user: {e}") from e
+
+        return handler
+
     def create_chore_handler(self, operation: str) -> Callable[[ServiceCall], Awaitable[None]]:
         """Create a chore operation handler."""
         async def handler(call: ServiceCall) -> None:
@@ -312,7 +367,12 @@ async def _async_setup_services(
         (SERVICE_ADD_ROOM, factory.create_room_handler("add"), SERVICE_ADD_ROOM_SCHEMA),
         (SERVICE_REMOVE_ROOM, factory.create_room_handler("remove"), SERVICE_REMOVE_ROOM_SCHEMA),
         (SERVICE_UPDATE_ROOM, factory.create_room_handler("update"), SERVICE_UPDATE_ROOM_SCHEMA),
-        
+
+        # User services
+        (SERVICE_ADD_USER, factory.create_user_handler("add"), SERVICE_ADD_USER_SCHEMA),
+        (SERVICE_REMOVE_USER, factory.create_user_handler("remove"), SERVICE_REMOVE_USER_SCHEMA),
+        (SERVICE_UPDATE_USER, factory.create_user_handler("update"), SERVICE_UPDATE_USER_SCHEMA),
+
         # Chore services
         (SERVICE_ADD_CHORE, factory.create_chore_handler("add"), SERVICE_ADD_CHORE_SCHEMA),
         (SERVICE_REMOVE_CHORE, factory.create_chore_handler("remove"), SERVICE_REMOVE_CHORE_SCHEMA),

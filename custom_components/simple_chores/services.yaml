@@ -52,6 +52,60 @@ update_room:
       selector:
         icon:
 
+add_user:
+  name: Add User
+  description: Create a new custom user (no Home Assistant login required).
+  fields:
+    name:
+      name: Name
+      description: The name of the user.
+      required: true
+      example: "John Doe"
+      selector:
+        text:
+    avatar:
+      name: Avatar
+      description: MDI icon for the user avatar.
+      required: false
+      example: "mdi:account"
+      selector:
+        icon:
+
+remove_user:
+  name: Remove User
+  description: Delete a custom user.
+  fields:
+    user_id:
+      name: User ID
+      description: The ID of the user to remove.
+      required: true
+      example: "custom_user_abc123"
+      selector:
+        text:
+
+update_user:
+  name: Update User
+  description: Update a custom user's details.
+  fields:
+    user_id:
+      name: User ID
+      description: The ID of the user to update.
+      required: true
+      selector:
+        text:
+    name:
+      name: Name
+      description: The new name for the user.
+      required: false
+      selector:
+        text:
+    avatar:
+      name: Avatar
+      description: The new avatar icon for the user.
+      required: false
+      selector:
+        icon:
+
 add_chore:
   name: Add Chore
   description: Create a new chore.
@@ -81,10 +135,16 @@ add_chore:
               label: "Daily"
             - value: "weekly"
               label: "Weekly"
+            - value: "biweekly"
+              label: "Bi-Weekly (Every 2 weeks)"
             - value: "monthly"
               label: "Monthly"
+            - value: "bimonthly"
+              label: "Bi-Monthly (Every 2 months)"
             - value: "quarterly"
-              label: "Quarterly"
+              label: "Quarterly (Every 3 months)"
+            - value: "biannual"
+              label: "Bi-Annual (Every 6 months)"
             - value: "yearly"
               label: "Yearly"
     start_date:
@@ -145,10 +205,16 @@ update_chore:
               label: "Daily"
             - value: "weekly"
               label: "Weekly"
+            - value: "biweekly"
+              label: "Bi-Weekly (Every 2 weeks)"
             - value: "monthly"
               label: "Monthly"
+            - value: "bimonthly"
+              label: "Bi-Monthly (Every 2 months)"
             - value: "quarterly"
-              label: "Quarterly"
+              label: "Quarterly (Every 3 months)"
+            - value: "biannual"
+              label: "Bi-Annual (Every 6 months)"
             - value: "yearly"
               label: "Yearly"
     next_due:

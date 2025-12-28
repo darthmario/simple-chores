@@ -189,20 +189,33 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._room_name_cache.get(room_id, "Unknown Room")
 
     async def async_get_users(self) -> list[dict[str, Any]]:
-        """Get all Home Assistant users."""
-        users = await self.hass.auth.async_get_users()
-        return [
-            {
-                "id": user.id,
-                "name": user.name or user.id,
-                "is_active": user.is_active,
-            }
-            for user in users
-            if user.is_active
-        ]
+        """Get all users (HA users + custom users)."""
+        users = []
+
+        # Get Home Assistant users
+        ha_users = await self.hass.auth.async_get_users()
+        for user in ha_users:
+            if user.is_active:
+                users.append({
+                    "id": user.id,
+                    "name": user.name or user.id,
+                    "is_custom": False,
+                    "is_active": True,
+                })
+
+        # Add custom users
+        for user in self.store.users.values():
+            users.append(user)
+
+        return users
 
     async def async_get_user_name(self, user_id: str) -> str:
-        """Get a user's display name by ID."""
+        """Get a user's display name by ID (checks both HA users and custom users)."""
+        # Check custom users first
+        if user_id in self.store.users:
+            return self.store.users[user_id]["name"]
+
+        # Check HA users
         users = await self.hass.auth.async_get_users()
         for user in users:
             if user.id == user_id:
@@ -272,6 +285,33 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         result = self.store.remove_room(room_id)
         if result:
             self._invalidate_room_cache()  # Cache must be refreshed
+            await self.store.async_save()
+            await self.async_request_refresh()
+        return result
+
+    async def async_add_user(
+        self, name: str, avatar: str | None = None
+    ) -> dict[str, Any]:
+        """Add a custom user."""
+        user = self.store.add_user(name, avatar)
+        await self.store.async_save()
+        await self.async_request_refresh()
+        return user
+
+    async def async_update_user(
+        self, user_id: str, name: str | None = None, avatar: str | None = None
+    ) -> dict[str, Any] | None:
+        """Update a custom user."""
+        user = self.store.update_user(user_id, name, avatar)
+        if user:
+            await self.store.async_save()
+            await self.async_request_refresh()
+        return user
+
+    async def async_remove_user(self, user_id: str) -> bool:
+        """Remove a custom user."""
+        result = self.store.remove_user(user_id)
+        if result:
             await self.store.async_save()
             await self.async_request_refresh()
         return result

@@ -30,6 +30,7 @@ class SimpleChoresStore:
             "rooms": {},
             "chores": {},
             "history": [],
+            "users": {},
         }
         self._dirty = False
         self._save_task: asyncio.Task | None = None
@@ -48,6 +49,11 @@ class SimpleChoresStore:
     def history(self) -> list[dict[str, Any]]:
         """Return completion history."""
         return self._data.get("history", [])
+
+    @property
+    def users(self) -> dict[str, Any]:
+        """Return all custom users."""
+        return self._data.get("users", {})
 
     async def async_load(self) -> dict[str, Any]:
         """Load data from storage."""
@@ -168,6 +174,58 @@ class SimpleChoresStore:
                 len(chores_to_remove)
             )
 
+        return True
+
+    # User operations
+    def add_user(self, name: str, avatar: str | None = None) -> dict[str, Any]:
+        """Add a custom user (no HA login required)."""
+        # Input validation
+        if not name or not name.strip():
+            raise ValueError("User name cannot be empty")
+        if len(name.strip()) > MAX_ROOM_NAME_LENGTH:  # Reuse room name length limit
+            raise ValueError(f"User name too long (max {MAX_ROOM_NAME_LENGTH} characters)")
+
+        user_id = f"custom_user_{uuid.uuid4().hex[:8]}"
+        user = {
+            "id": user_id,
+            "name": name.strip(),
+            "avatar": avatar or "mdi:account",
+            "is_custom": True,
+        }
+        self._data["users"][user_id] = user
+        _LOGGER.info("Created custom user '%s' with ID: %s", name, user_id)
+        return user
+
+    def update_user(self, user_id: str, name: str | None = None, avatar: str | None = None) -> dict[str, Any] | None:
+        """Update a custom user."""
+        if user_id not in self._data["users"]:
+            return None
+
+        # Validate name length if provided
+        if name is not None:
+            if not name.strip():
+                raise ValueError("User name cannot be empty")
+            if len(name.strip()) > MAX_ROOM_NAME_LENGTH:
+                raise ValueError(f"User name too long (max {MAX_ROOM_NAME_LENGTH} characters)")
+
+        user = self._data["users"][user_id]
+        if name is not None:
+            user["name"] = name.strip()
+        if avatar is not None:
+            user["avatar"] = avatar
+        return user
+
+    def remove_user(self, user_id: str) -> bool:
+        """Remove a custom user."""
+        if user_id not in self._data["users"]:
+            return False
+
+        # Note: We don't remove chore assignments when deleting a user
+        # The assignments will just show the user ID until reassigned
+        user_name = self._data["users"][user_id].get("name", user_id)
+        del self._data["users"][user_id]
+
+        _LOGGER.info("Removed custom user '%s' (ID: %s)", user_name, user_id)
         return True
 
     # Chore operations
