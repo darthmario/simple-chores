@@ -3314,11 +3314,22 @@ class SimpleChoresCardEditor extends LitElement {
   }
 }
 
-  // Register the custom elements
-  customElements.define("simple-chores-card", SimpleChoresCard);
-  customElements.define("simple-chores-card-editor", SimpleChoresCardEditor);
-  
-  console.info("Simple Chores Card: Successfully registered!");
+  // Register the custom elements (with guard to prevent double registration)
+  if (!customElements.get("simple-chores-card")) {
+    customElements.define("simple-chores-card", SimpleChoresCard);
+    console.info("Simple Chores Card: Registered simple-chores-card");
+  } else {
+    console.warn("Simple Chores Card: simple-chores-card already registered, skipping");
+  }
+
+  if (!customElements.get("simple-chores-card-editor")) {
+    customElements.define("simple-chores-card-editor", SimpleChoresCardEditor);
+    console.info("Simple Chores Card: Registered simple-chores-card-editor");
+  } else {
+    console.warn("Simple Chores Card: simple-chores-card-editor already registered, skipping");
+  }
+
+  console.info("Simple Chores Card: Registration complete!");
 };
 
 // Start initialization
