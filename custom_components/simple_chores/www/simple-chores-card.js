@@ -1193,10 +1193,14 @@ class SimpleChoresCard extends LitElement {
       // Invalidate cache immediately to force fresh data on next render
       this._invalidateCache('users');
 
-      // Wait for coordinator to refresh and sensor to update
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // First update to clear the modal list immediately
+      this.requestUpdate();
 
-      // Force UI update with fresh data
+      // Wait for coordinator to refresh and sensor to update
+      await new Promise(resolve => setTimeout(resolve, 800));
+
+      // Force another update with fresh data from sensor
+      this._invalidateCache('users');
       this.requestUpdate();
     } catch (error) {
       console.error("Simple Chores Card: Failed to delete user:", error);
