@@ -1190,8 +1190,12 @@ class SimpleChoresCard extends LitElement {
 
       this._showToast(`User "${userName}" deleted successfully!`);
 
+      console.log("Before delete - cache valid?", this._isCacheValid('users'));
+      console.log("Before delete - cached users:", this._cache.users.data);
+
       // Invalidate cache immediately to force fresh data on next render
       this._invalidateCache('users');
+      console.log("After first invalidate - cache valid?", this._isCacheValid('users'));
 
       // First update to clear the modal list immediately
       this.requestUpdate();
@@ -1201,6 +1205,8 @@ class SimpleChoresCard extends LitElement {
 
       // Force another update with fresh data from sensor
       this._invalidateCache('users');
+      console.log("After second invalidate - cache valid?", this._isCacheValid('users'));
+      console.log("Fresh users from _getUsers():", this._getUsers());
       this.requestUpdate();
     } catch (error) {
       console.error("Simple Chores Card: Failed to delete user:", error);
@@ -1431,7 +1437,9 @@ class SimpleChoresCard extends LitElement {
     }
 
     const users = this._getUsers();
+    console.log("Manage Users Modal - All users:", users);
     const customUsers = users.filter(user => user.is_custom);
+    console.log("Manage Users Modal - Custom users:", customUsers);
 
     return html`
       <div class="modal-overlay" @click=${this._closeManageUsersModal}>
