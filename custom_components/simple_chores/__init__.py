@@ -46,6 +46,7 @@ from .const import (
     SERVICE_REMOVE_USER,
     SERVICE_SEND_NOTIFICATION,
     SERVICE_SKIP_CHORE,
+    SERVICE_SNOOZE_CHORE,
     SERVICE_UPDATE_CHORE,
     SERVICE_UPDATE_ROOM,
     SERVICE_UPDATE_USER,
@@ -140,6 +141,12 @@ SERVICE_COMPLETE_CHORE_SCHEMA = vol.Schema(
 )
 
 SERVICE_SKIP_CHORE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_CHORE_ID): cv.string,
+    }
+)
+
+SERVICE_SNOOZE_CHORE_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_CHORE_ID): cv.string,
     }
@@ -317,6 +324,9 @@ class ServiceHandlerFactory:
                 elif operation == "skip":
                     await self.coordinator.async_skip_chore(chore_id)
                     _LOGGER.info("Successfully skipped chore: %s", chore_id)
+                elif operation == "snooze":
+                    await self.coordinator.async_snooze_chore(chore_id)
+                    _LOGGER.info("Successfully snoozed chore: %s", chore_id)
             except ValueError as e:
                 _LOGGER.error("Validation error in %s_chore: %s", operation, e)
                 raise HomeAssistantError(f"Invalid input: {e}") from e
@@ -389,7 +399,8 @@ async def _async_setup_services(
         (SERVICE_UPDATE_CHORE, factory.create_chore_handler("update"), SERVICE_UPDATE_CHORE_SCHEMA),
         (SERVICE_COMPLETE_CHORE, factory.create_chore_handler("complete"), SERVICE_COMPLETE_CHORE_SCHEMA),
         (SERVICE_SKIP_CHORE, factory.create_chore_handler("skip"), SERVICE_SKIP_CHORE_SCHEMA),
-        
+        (SERVICE_SNOOZE_CHORE, factory.create_chore_handler("snooze"), SERVICE_SNOOZE_CHORE_SCHEMA),
+
         # Data services
         (SERVICE_GET_HISTORY, factory.create_data_handler("history"), SERVICE_GET_HISTORY_SCHEMA),
         (SERVICE_GET_USER_STATS, factory.create_data_handler("stats"), None),

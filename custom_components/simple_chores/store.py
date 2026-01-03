@@ -274,6 +274,7 @@ class SimpleChoresStore:
             "last_completed_by": None,
             "next_due": next_due.isoformat(),
             "created_at": datetime.now().isoformat(),
+            "is_completed": False,
         }
         
         # Debug logging for assignment
@@ -336,9 +337,9 @@ class SimpleChoresStore:
         chore_id: str,
         user_id: str,
         user_name: str,
-        next_due: date,
+        next_due: date | None,
     ) -> dict[str, Any] | None:
-        """Mark a chore as completed and schedule next occurrence."""
+        """Mark a chore as completed and schedule next occurrence (or mark as done if one-off)."""
         if chore_id not in self._data["chores"]:
             return None
 
@@ -348,7 +349,15 @@ class SimpleChoresStore:
         # Update chore
         chore["last_completed"] = now.date().isoformat()
         chore["last_completed_by"] = user_id
-        chore["next_due"] = next_due.isoformat()
+
+        if next_due is None:
+            # One-off chore - mark as completed permanently
+            chore["is_completed"] = True
+            _LOGGER.info("One-off chore '%s' marked as completed", chore["name"])
+        else:
+            # Recurring chore - reschedule
+            chore["next_due"] = next_due.isoformat()
+            chore["is_completed"] = False  # Ensure flag is set for recurring chores
 
         # Add to history
         history_entry = {
@@ -397,6 +406,17 @@ class SimpleChoresStore:
             return None
         chore = self._data["chores"][chore_id]
         chore["next_due"] = next_due.isoformat()
+        return chore
+
+    def snooze_chore(self, chore_id: str) -> dict[str, Any] | None:
+        """Snooze a chore by postponing it 1 day."""
+        if chore_id not in self._data["chores"]:
+            return None
+        chore = self._data["chores"][chore_id]
+        current_due = date.fromisoformat(chore["next_due"])
+        new_due = current_due + timedelta(days=1)
+        chore["next_due"] = new_due.isoformat()
+        _LOGGER.info("Snoozed chore '%s' from %s to %s", chore["name"], current_due, new_due)
         return chore
 
     def get_chore_history(self, chore_id: str) -> list[dict[str, Any]]:

@@ -52,6 +52,7 @@ class SimpleChoresCard extends LitElement {
       hass: { type: Object },
       config: { type: Object },
       _selectedRoom: { type: String },
+      _showMyChoresOnly: { type: Boolean },
       // Modal system
       _activeModal: { type: String },
       _modalData: { type: Object },
@@ -97,6 +98,7 @@ class SimpleChoresCard extends LitElement {
   constructor() {
     super();
     this._selectedRoom = "all";
+    this._showMyChoresOnly = false;
     // Modal system
     this._activeModal = null;
     this._modalData = {};
@@ -439,6 +441,13 @@ class SimpleChoresCard extends LitElement {
                 `)}
               </select>
             </div>
+            <button
+              class="my-chores-filter-btn ${this._showMyChoresOnly ? 'active' : ''}"
+              @click=${this._toggleMyChoresFilter}
+              title="${this._showMyChoresOnly ? 'Show All Chores' : 'Show My Chores Only'}"
+            >
+              <ha-icon icon="mdi:${this._showMyChoresOnly ? 'account-check' : 'account-outline'}"></ha-icon>
+            </button>
             <button class="add-room-btn" @click=${this._openAddRoomModal} title="Add Custom Room">
               <ha-icon icon="mdi:home-plus"></ha-icon>
             </button>
@@ -504,7 +513,8 @@ class SimpleChoresCard extends LitElement {
   }
 
   _renderChoreList(chores, title) {
-    const filteredChores = this._filterChoresByRoom(chores);
+    const roomFiltered = this._filterChoresByRoom(chores);
+    const filteredChores = this._filterChoresByUser(roomFiltered);
 
     // Performance optimization: limit initial render for large lists
     const limitKey = title.includes('Today') ? 'dueToday' : 'dueNext7Days';
@@ -594,11 +604,18 @@ class SimpleChoresCard extends LitElement {
           >
             ✓ Complete
           </button>
-          <button 
-            @click=${() => this._skipChore(chore.id)} 
+          <button
+            @click=${() => this._skipChore(chore.id)}
             class="action-btn skip-btn"
           >
             ⏭ Skip
+          </button>
+          <button
+            @click=${() => this._snoozeChore(chore.id)}
+            class="action-btn snooze-btn"
+            title="Snooze for 1 day"
+          >
+            ⏰ Snooze
           </button>
         </div>
       </div>
@@ -842,6 +859,7 @@ class SimpleChoresCard extends LitElement {
    */
   _formatFrequency(frequency) {
     const frequencyLabels = {
+      once: 'Once',
       daily: 'Daily',
       weekly: 'Weekly',
       biweekly: 'Bi-Weekly',
@@ -856,6 +874,18 @@ class SimpleChoresCard extends LitElement {
 
   _roomChanged(e) {
     this._selectedRoom = e.target.value;
+  }
+
+  _toggleMyChoresFilter() {
+    this._showMyChoresOnly = !this._showMyChoresOnly;
+  }
+
+  _filterChoresByUser(chores) {
+    if (!this._showMyChoresOnly) return chores;
+    if (!this.hass || !this.hass.user) return chores;
+
+    const currentUserId = this.hass.user.id;
+    return chores.filter(chore => chore.assigned_to === currentUserId);
   }
 
   _completeChore(choreId) {
@@ -1609,6 +1639,7 @@ class SimpleChoresCard extends LitElement {
                 .value=${this._formData.chore.frequency}
                 @change=${this._handleChoreFrequencyInput}
               >
+                <option value="once">Once (one-time only)</option>
                 <option value="daily">Daily</option>
                 <option value="weekly">Weekly</option>
                 <option value="biweekly">Bi-Weekly (Every 2 weeks)</option>
@@ -1799,6 +1830,7 @@ class SimpleChoresCard extends LitElement {
                 .value=${this._formData.chore.frequency}
                 @change=${this._handleEditChoreFrequencyInput}
               >
+                <option value="once">Once (one-time only)</option>
                 <option value="daily">Daily</option>
                 <option value="weekly">Weekly</option>
                 <option value="biweekly">Bi-Weekly (Every 2 weeks)</option>
@@ -1897,7 +1929,9 @@ class SimpleChoresCard extends LitElement {
       return html``;
     }
 
-    const allChores = this._getAllChores();
+    const rawChores = this._getAllChores();
+    const roomFiltered = this._filterChoresByRoom(rawChores);
+    const allChores = this._filterChoresByUser(roomFiltered);
     const rooms = this._getRooms();
 
     return html`
@@ -1970,11 +2004,18 @@ class SimpleChoresCard extends LitElement {
                         >
                           ✓ Complete
                         </button>
-                        <button 
-                          @click=${() => this._skipChoreFromModal(chore.id)} 
+                        <button
+                          @click=${() => this._skipChoreFromModal(chore.id)}
                           class="action-btn skip-btn"
                         >
                           ⏭ Skip
+                        </button>
+                        <button
+                          @click=${() => this._snoozeChoreFromModal(chore.id)}
+                          class="action-btn snooze-btn"
+                          title="Snooze for 1 day"
+                        >
+                          ⏰ Snooze
                         </button>
                       </div>
                     </div>
@@ -2065,6 +2106,11 @@ class SimpleChoresCard extends LitElement {
   async _skipChoreFromModal(choreId) {
     this._closeAllChoresModal();
     await this._skipChore(choreId);
+  }
+
+  async _snoozeChoreFromModal(choreId) {
+    this._closeAllChoresModal();
+    await this._snoozeChore(choreId);
   }
 
   _openAllChoresModal() {
@@ -2479,6 +2525,18 @@ class SimpleChoresCard extends LitElement {
     }
   }
 
+  async _snoozeChore(choreId) {
+    try {
+      await this.hass.callService("simple_chores", "snooze_chore", {
+        chore_id: choreId
+      });
+      this._showToast("Chore snoozed for 1 day!");
+    } catch (error) {
+      console.error("Simple Chores Card: Error snoozing chore:", error);
+      this._showToast("Error snoozing chore. Please try again.");
+    }
+  }
+
   async _deleteChore(choreId, choreName) {
     if (!confirm(`Are you sure you want to delete "${choreName}"?`)) {
       return;
@@ -2591,7 +2649,7 @@ class SimpleChoresCard extends LitElement {
         flex-wrap: wrap;
       }
       
-      .add-room-btn, .add-chore-btn, .manage-rooms-btn, .history-btn {
+      .add-room-btn, .add-chore-btn, .manage-rooms-btn, .history-btn, .my-chores-filter-btn, .add-user-btn, .manage-users-btn {
         background: rgba(255, 255, 255, 0.2);
         border: none;
         border-radius: 50%;
@@ -2604,9 +2662,19 @@ class SimpleChoresCard extends LitElement {
         cursor: pointer;
         transition: background-color 0.2s;
       }
-      
-      .add-room-btn:hover, .add-chore-btn:hover, .manage-rooms-btn:hover, .history-btn:hover {
+
+      .add-room-btn:hover, .add-chore-btn:hover, .manage-rooms-btn:hover, .history-btn:hover, .my-chores-filter-btn:hover, .add-user-btn:hover, .manage-users-btn:hover {
         background: rgba(255, 255, 255, 0.3);
+      }
+
+      .my-chores-filter-btn.active {
+        background: var(--primary-color);
+        color: white;
+      }
+
+      .my-chores-filter-btn.active:hover {
+        background: var(--primary-color);
+        opacity: 0.9;
       }
       
       

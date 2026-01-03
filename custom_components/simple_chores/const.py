@@ -8,6 +8,7 @@ STORAGE_VERSION: Final = 1
 STORAGE_KEY: Final = "simple_chores"
 
 # Frequencies
+FREQUENCY_ONCE: Final = "once"
 FREQUENCY_DAILY: Final = "daily"
 FREQUENCY_WEEKLY: Final = "weekly"
 FREQUENCY_BIWEEKLY: Final = "biweekly"
@@ -18,6 +19,7 @@ FREQUENCY_BIANNUAL: Final = "biannual"
 FREQUENCY_YEARLY: Final = "yearly"
 
 FREQUENCIES: Final = [
+    FREQUENCY_ONCE,
     FREQUENCY_DAILY,
     FREQUENCY_WEEKLY,
     FREQUENCY_BIWEEKLY,
@@ -44,6 +46,7 @@ SERVICE_REMOVE_CHORE: Final = "remove_chore"
 SERVICE_UPDATE_CHORE: Final = "update_chore"
 SERVICE_COMPLETE_CHORE: Final = "complete_chore"
 SERVICE_SKIP_CHORE: Final = "skip_chore"
+SERVICE_SNOOZE_CHORE: Final = "snooze_chore"
 SERVICE_GET_HISTORY: Final = "get_history"
 SERVICE_GET_USER_STATS: Final = "get_user_stats"
 SERVICE_SEND_NOTIFICATION: Final = "send_due_notification"

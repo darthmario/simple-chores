@@ -131,6 +131,8 @@ add_chore:
       selector:
         select:
           options:
+            - value: "once"
+              label: "Once (one-time only)"
             - value: "daily"
               label: "Daily"
             - value: "weekly"
@@ -201,6 +203,8 @@ update_chore:
       selector:
         select:
           options:
+            - value: "once"
+              label: "Once (one-time only)"
             - value: "daily"
               label: "Daily"
             - value: "weekly"
@@ -255,6 +259,17 @@ skip_chore:
     chore_id:
       name: Chore ID
       description: The ID of the chore to skip.
+      required: true
+      selector:
+        text:
+
+snooze_chore:
+  name: Snooze Chore
+  description: Postpone a chore by 1 day without marking it complete.
+  fields:
+    chore_id:
+      name: Chore ID
+      description: The ID of the chore to snooze.
       required: true
       selector:
         text:

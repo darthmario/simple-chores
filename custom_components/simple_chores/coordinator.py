@@ -17,6 +17,7 @@ from .const import (
     FREQUENCY_BIWEEKLY,
     FREQUENCY_DAILY,
     FREQUENCY_MONTHLY,
+    FREQUENCY_ONCE,
     FREQUENCY_QUARTERLY,
     FREQUENCY_WEEKLY,
     FREQUENCY_YEARLY,
@@ -31,8 +32,13 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
-def calculate_next_due(from_date: date, frequency: str) -> date:
-    """Calculate the next due date based on frequency."""
+def calculate_next_due(from_date: date, frequency: str) -> date | None:
+    """Calculate the next due date based on frequency.
+
+    Returns None for one-off chores (frequency='once'), indicating they should not be rescheduled.
+    """
+    if frequency == FREQUENCY_ONCE:
+        return None  # One-off chores don't get rescheduled
     if frequency == FREQUENCY_DAILY:
         return from_date + timedelta(days=1)
     if frequency == FREQUENCY_WEEKLY:
@@ -102,15 +108,19 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         by_room: dict[str, list[dict[str, Any]]] = {room["id"]: [] for room in all_rooms}
 
         for chore in self.store.chores.values():
+            # Skip completed one-off chores
+            if chore.get("is_completed", False):
+                continue
+
             next_due = date.fromisoformat(chore["next_due"])
             room_name = self._get_room_name(chore["room_id"], all_rooms)
             chore_with_room = {
                 **chore,
                 "room_name": room_name,
             }
-            
+
             # Debug logging for troubleshooting
-            _LOGGER.debug("Chore: %s, Room ID: %s, Room Name: %s, Next Due: %s, Assigned To: %s", 
+            _LOGGER.debug("Chore: %s, Room ID: %s, Room Name: %s, Next Due: %s, Assigned To: %s",
                          chore["name"], chore["room_id"], room_name, chore["next_due"], chore.get("assigned_to"))
             _LOGGER.debug("Full chore data: %s", chore)
 
@@ -134,6 +144,9 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Get all users (HA + custom)
         all_users = await self.async_get_users()
 
+        # Filter out completed one-off chores from chores list
+        active_chores = [c for c in self.store.chores.values() if not c.get("is_completed", False)]
+
         result = {
             "today": today.isoformat(),
             "seven_days_from_today": next_seven_days.isoformat(),
@@ -147,8 +160,8 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "by_room": by_room,
             "rooms": all_rooms,
             "users": all_users,
-            "chores": list(self.store.chores.values()),
-            "total_chores": len(self.store.chores),
+            "chores": active_chores,
+            "total_chores": len(active_chores),
         }
         
         _LOGGER.debug("Data update complete. Total chores: %d, Due today: %d, Due this week: %d, Overdue: %d", 
@@ -258,6 +271,17 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         next_due = calculate_next_due(current_due, chore["frequency"])
 
         result = self.store.skip_chore(chore_id, next_due)
+        if result:
+            await self.store.async_save()
+            await self.async_request_refresh()
+        return result
+
+    async def async_snooze_chore(self, chore_id: str) -> dict[str, Any] | None:
+        """Snooze a chore by postponing it 1 day."""
+        if chore_id not in self.store.chores:
+            return None
+
+        result = self.store.snooze_chore(chore_id)
         if result:
             await self.store.async_save()
             await self.async_request_refresh()
