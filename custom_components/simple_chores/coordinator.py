@@ -105,6 +105,7 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         due_today: list[dict[str, Any]] = []
         due_this_week: list[dict[str, Any]] = []
         overdue: list[dict[str, Any]] = []
+        all_active_chores: list[dict[str, Any]] = []
         by_room: dict[str, list[dict[str, Any]]] = {room["id"]: [] for room in all_rooms}
 
         for chore in self.store.chores.values():
@@ -119,10 +120,12 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "room_name": room_name,
             }
 
+            # Add to all active chores list (with room_name)
+            all_active_chores.append(chore_with_room)
+
             # Debug logging for troubleshooting
             _LOGGER.debug("Chore: %s, Room ID: %s, Room Name: %s, Next Due: %s, Assigned To: %s",
                          chore["name"], chore["room_id"], room_name, chore["next_due"], chore.get("assigned_to"))
-            _LOGGER.debug("Full chore data: %s", chore)
 
             # Categorize by due date
             if next_due < today:
@@ -144,9 +147,6 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Get all users (HA + custom)
         all_users = await self.async_get_users()
 
-        # Filter out completed one-off chores from chores list
-        active_chores = [c for c in self.store.chores.values() if not c.get("is_completed", False)]
-
         result = {
             "today": today.isoformat(),
             "seven_days_from_today": next_seven_days.isoformat(),
@@ -160,8 +160,8 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "by_room": by_room,
             "rooms": all_rooms,
             "users": all_users,
-            "chores": active_chores,
-            "total_chores": len(active_chores),
+            "chores": all_active_chores,
+            "total_chores": len(all_active_chores),
         }
         
         _LOGGER.debug("Data update complete. Total chores: %d, Due today: %d, Due this week: %d, Overdue: %d", 

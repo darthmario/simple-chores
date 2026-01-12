@@ -2337,13 +2337,15 @@ class SimpleChoresCard extends LitElement {
     `;
   }
 
-  _getRoomName(roomId, rooms) {
+  _getRoomName(roomId, rooms = null) {
     // Use cache for frequent lookups
     if (this._cache.roomLookup.has(roomId)) {
       return this._cache.roomLookup.get(roomId);
     }
 
-    const room = rooms.find(r => r.id === roomId);
+    // Get rooms if not provided
+    const roomList = rooms || this._getRooms();
+    const room = roomList.find(r => r.id === roomId);
     const roomName = room ? room.name : 'Unknown Room';
 
     // Cache the result
