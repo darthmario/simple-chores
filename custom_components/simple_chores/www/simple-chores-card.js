@@ -5,7 +5,7 @@
 
 // Card version - update this when releasing new versions
 // This should match the version in manifest.json
-const CARD_VERSION = "1.5.0";
+const CARD_VERSION = "1.5.1";
 
 // Try the most direct approach used by working HA cards
 let LitElement, html, css;
@@ -905,6 +905,85 @@ class SimpleChoresCard extends LitElement {
     this._activeChoreMenu = this._activeChoreMenu === choreId ? null : choreId;
   }
 
+  /**
+   * Calculate the next occurrence date based on frequency.
+   * @param {Date} fromDate - The starting date
+   * @param {string} frequency - The frequency (daily, weekly, monthly, etc.)
+   * @returns {Date|null} - The next occurrence date, or null for one-off chores
+   */
+  _calculateNextOccurrence(fromDate, frequency) {
+    const date = new Date(fromDate);
+
+    switch (frequency) {
+      case 'daily':
+        date.setDate(date.getDate() + 1);
+        break;
+      case 'weekly':
+        date.setDate(date.getDate() + 7);
+        break;
+      case 'biweekly':
+        date.setDate(date.getDate() + 14);
+        break;
+      case 'monthly':
+        date.setMonth(date.getMonth() + 1);
+        break;
+      case 'bimonthly':
+        date.setMonth(date.getMonth() + 2);
+        break;
+      case 'quarterly':
+        date.setMonth(date.getMonth() + 3);
+        break;
+      case 'biannual':
+        date.setMonth(date.getMonth() + 6);
+        break;
+      case 'yearly':
+        date.setFullYear(date.getFullYear() + 1);
+        break;
+      case 'once':
+        return null; // One-off chores don't recur
+      default:
+        return null;
+    }
+
+    return date;
+  }
+
+  /**
+   * Generate simulated future occurrences for a chore.
+   * @param {Object} chore - The chore object
+   * @param {Date} endDate - The end date to generate occurrences until
+   * @returns {Array} - Array of simulated occurrence objects
+   */
+  _generateFutureOccurrences(chore, endDate) {
+    const occurrences = [];
+    const frequency = chore.frequency;
+
+    // Don't generate for one-off chores
+    if (frequency === 'once') {
+      return occurrences;
+    }
+
+    const startDate = new Date(chore.next_due || chore.due_date);
+    let currentDate = this._calculateNextOccurrence(startDate, frequency);
+
+    // Generate up to 12 future occurrences or until endDate
+    let count = 0;
+    const maxOccurrences = 12;
+
+    while (currentDate && currentDate <= endDate && count < maxOccurrences) {
+      occurrences.push({
+        ...chore,
+        next_due: currentDate.toISOString().split('T')[0],
+        isProjected: true, // Flag to indicate this is a simulated occurrence
+      });
+
+      currentDate = this._calculateNextOccurrence(currentDate, frequency);
+      count++;
+    }
+
+    return occurrences;
+  }
+
   _renderCalendarView() {
     const allChores = this._getAllChores();
     const roomFiltered = this._filterChoresByRoom(allChores);
@@ -959,6 +1038,9 @@ class SimpleChoresCard extends LitElement {
       weeks.push(currentWeek);
     }
 
+    // Calculate end date for projections (3 months ahead)
+    const projectionEndDate = new Date(this._calendarYear, this._calendarMonth + 3, 0);
+
     // Group chores by date (using optimistically updated chores)
     const choresByDate = {};
     choresWithOptimistic.forEach(chore => {
@@ -968,8 +1050,18 @@ class SimpleChoresCard extends LitElement {
         if (!choresByDate[dateKey]) {
           choresByDate[dateKey] = [];
         }
-        choresByDate[dateKey].push({ ...chore, isCompleted: false });
+        choresByDate[dateKey].push({ ...chore, isCompleted: false, isProjected: false });
       }
+
+      // Generate and add future occurrences
+      const futureOccurrences = this._generateFutureOccurrences(chore, projectionEndDate);
+      futureOccurrences.forEach(occurrence => {
+        const dateKey = occurrence.next_due;
+        if (!choresByDate[dateKey]) {
+          choresByDate[dateKey] = [];
+        }
+        choresByDate[dateKey].push({ ...occurrence, isCompleted: false });
+      });
     });
 
     // Group completed chores by completion date
@@ -1030,15 +1122,16 @@ class SimpleChoresCard extends LitElement {
                 <div class="calendar-day-number">${day}</div>
                 <div class="calendar-chores">
                   ${choresOnDate.map(chore => {
-                    const isOverdue = isPast;
+                    const isProjected = chore.isProjected || false;
+                    const isOverdue = isPast && !isProjected;
                     const roomName = chore.room_name || this._getRoomName(chore.room_id) || '';
                     return html`
                       <div
-                        class="calendar-chore ${isOverdue ? 'overdue' : ''}"
-                        draggable="true"
-                        @dragstart=${(e) => this._handleDragStart(e, chore)}
-                        @click=${() => this._openCompleteChoreModal(chore)}
-                        title="${chore.name}${roomName ? ` - ${roomName}` : ''}"
+                        class="calendar-chore ${isOverdue ? 'overdue' : ''} ${isProjected ? 'projected' : ''}"
+                        draggable="${isProjected ? 'false' : 'true'}"
+                        @dragstart=${(e) => isProjected ? e.preventDefault() : this._handleDragStart(e, chore)}
+                        @click=${() => isProjected ? null : this._openCompleteChoreModal(chore)}
+                        title="${chore.name}${roomName ? ` - ${roomName}` : ''}${isProjected ? ' (Projected)' : ''}"
                       >
                         <span class="calendar-chore-name">${chore.name}</span>
                         ${roomName ? html`<span class="calendar-chore-room">${roomName}</span>` : ''}
@@ -1078,6 +1171,9 @@ class SimpleChoresCard extends LitElement {
           </span>
           <span class="legend-item">
             <span class="legend-box completed"></span> Completed
+          </span>
+          <span class="legend-item">
+            <span class="legend-box projected"></span> Projected
           </span>
         </div>
       </div>
@@ -3503,6 +3599,18 @@ class SimpleChoresCard extends LitElement {
         flex-shrink: 0;
       }
 
+      .calendar-chore.projected {
+        background: var(--primary-color);
+        opacity: 0.5;
+        border: 1px dashed rgba(255, 255, 255, 0.5);
+        cursor: default;
+      }
+
+      .calendar-chore.projected:hover {
+        transform: none;
+        box-shadow: none;
+      }
+
       .calendar-chore-name {
         display: block;
         overflow: hidden;
@@ -3564,6 +3672,12 @@ class SimpleChoresCard extends LitElement {
       .legend-box.completed {
         background: var(--success-color, #4CAF50);
         opacity: 0.7;
+      }
+
+      .legend-box.projected {
+        background: var(--primary-color);
+        opacity: 0.5;
+        border-style: dashed;
       }
 
       .room-selector select {
@@ -4520,18 +4634,22 @@ class SimpleChoresCardEditor extends LitElement {
     const target = ev.target;
     const configValue = target.configValue;
 
-    if (this[`_${configValue}`] === target.value) {
+    // Determine the value based on element type
+    const isCheckbox = target.tagName === 'HA-CHECKBOX' || target.type === 'checkbox';
+    const newValue = isCheckbox ? target.checked : target.value;
+
+    if (this[`_${configValue}`] === newValue) {
       return;
     }
 
     if (target.configValue) {
-      if (target.value === "" || target.value == null) {
+      if (newValue === "" || newValue == null) {
         this._config = { ...this._config };
         delete this._config[target.configValue];
       } else {
         this._config = {
           ...this._config,
-          [target.configValue]: target.checked !== undefined ? target.checked : target.value,
+          [target.configValue]: newValue,
         };
       }
     }
