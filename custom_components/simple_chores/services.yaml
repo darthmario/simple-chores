@@ -162,6 +162,111 @@ add_chore:
       example: "user-uuid"
       selector:
         text:
+    recurrence_type:
+      name: Recurrence Type
+      description: How the next due date is calculated - interval (from completion date) or anchored (specific days).
+      required: false
+      default: "interval"
+      selector:
+        select:
+          options:
+            - value: "interval"
+              label: "Interval (from completion)"
+            - value: "anchored"
+              label: "Anchored (specific days)"
+    anchor_days_of_week:
+      name: Anchor Days of Week
+      description: For weekly anchored recurrence - which days of the week (0=Sunday, 6=Saturday).
+      required: false
+      example: [1, 4]
+      selector:
+        select:
+          multiple: true
+          options:
+            - value: 0
+              label: "Sunday"
+            - value: 1
+              label: "Monday"
+            - value: 2
+              label: "Tuesday"
+            - value: 3
+              label: "Wednesday"
+            - value: 4
+              label: "Thursday"
+            - value: 5
+              label: "Friday"
+            - value: 6
+              label: "Saturday"
+    anchor_type:
+      name: Anchor Type
+      description: For monthly/yearly anchored recurrence - how to specify the day.
+      required: false
+      selector:
+        select:
+          options:
+            - value: "day_of_month"
+              label: "Day of month (e.g., 15th)"
+            - value: "week_pattern"
+              label: "Week pattern (e.g., 2nd Tuesday)"
+    anchor_day_of_month:
+      name: Anchor Day of Month
+      description: For day_of_month anchor type - the specific day (1-31).
+      required: false
+      example: 15
+      selector:
+        number:
+          min: 1
+          max: 31
+    anchor_week:
+      name: Anchor Week
+      description: For week_pattern anchor type - which week (1=first, 2=second, 3=third, 4=fourth, 5=last).
+      required: false
+      example: 2
+      selector:
+        select:
+          options:
+            - value: 1
+              label: "First"
+            - value: 2
+              label: "Second"
+            - value: 3
+              label: "Third"
+            - value: 4
+              label: "Fourth"
+            - value: 5
+              label: "Last"
+    anchor_weekday:
+      name: Anchor Weekday
+      description: For week_pattern anchor type - which day of the week (0=Sunday, 6=Saturday).
+      required: false
+      example: 2
+      selector:
+        select:
+          options:
+            - value: 0
+              label: "Sunday"
+            - value: 1
+              label: "Monday"
+            - value: 2
+              label: "Tuesday"
+            - value: 3
+              label: "Wednesday"
+            - value: 4
+              label: "Thursday"
+            - value: 5
+              label: "Friday"
+            - value: 6
+              label: "Saturday"
+    interval:
+      name: Interval
+      description: Custom interval multiplier (e.g., 2 for every 2 weeks instead of weekly).
+      required: false
+      default: 1
+      example: 2
+      selector:
+        number:
+          min: 1
+          max: 52
 
 remove_chore:
   name: Remove Chore
@@ -234,6 +339,104 @@ update_chore:
       example: "user-uuid"
       selector:
         text:
+    recurrence_type:
+      name: Recurrence Type
+      description: How the next due date is calculated - interval (from completion date) or anchored (specific days).
+      required: false
+      selector:
+        select:
+          options:
+            - value: "interval"
+              label: "Interval (from completion)"
+            - value: "anchored"
+              label: "Anchored (specific days)"
+    anchor_days_of_week:
+      name: Anchor Days of Week
+      description: For weekly anchored recurrence - which days of the week (0=Sunday, 6=Saturday).
+      required: false
+      selector:
+        select:
+          multiple: true
+          options:
+            - value: 0
+              label: "Sunday"
+            - value: 1
+              label: "Monday"
+            - value: 2
+              label: "Tuesday"
+            - value: 3
+              label: "Wednesday"
+            - value: 4
+              label: "Thursday"
+            - value: 5
+              label: "Friday"
+            - value: 6
+              label: "Saturday"
+    anchor_type:
+      name: Anchor Type
+      description: For monthly/yearly anchored recurrence - how to specify the day.
+      required: false
+      selector:
+        select:
+          options:
+            - value: "day_of_month"
+              label: "Day of month (e.g., 15th)"
+            - value: "week_pattern"
+              label: "Week pattern (e.g., 2nd Tuesday)"
+    anchor_day_of_month:
+      name: Anchor Day of Month
+      description: For day_of_month anchor type - the specific day (1-31).
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 31
+    anchor_week:
+      name: Anchor Week
+      description: For week_pattern anchor type - which week (1=first, 2=second, 3=third, 4=fourth, 5=last).
+      required: false
+      selector:
+        select:
+          options:
+            - value: 1
+              label: "First"
+            - value: 2
+              label: "Second"
+            - value: 3
+              label: "Third"
+            - value: 4
+              label: "Fourth"
+            - value: 5
+              label: "Last"
+    anchor_weekday:
+      name: Anchor Weekday
+      description: For week_pattern anchor type - which day of the week (0=Sunday, 6=Saturday).
+      required: false
+      selector:
+        select:
+          options:
+            - value: 0
+              label: "Sunday"
+            - value: 1
+              label: "Monday"
+            - value: 2
+              label: "Tuesday"
+            - value: 3
+              label: "Wednesday"
+            - value: 4
+              label: "Thursday"
+            - value: 5
+              label: "Friday"
+            - value: 6
+              label: "Saturday"
+    interval:
+      name: Interval
+      description: Custom interval multiplier (e.g., 2 for every 2 weeks instead of weekly).
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 52
 
 complete_chore:
   name: Complete Chore

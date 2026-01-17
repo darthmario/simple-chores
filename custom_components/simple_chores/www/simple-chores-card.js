@@ -91,6 +91,12 @@ class SimpleChoresCard extends LitElement {
       _choreLimits: { type: Object },
       // Loading state for async operations
       _isLoading: { type: Boolean },
+      // Calendar view mode: 'grid' or 'agenda'
+      _calendarMode: { type: String },
+      // Track card width for responsive behavior
+      _cardWidth: { type: Number },
+      // Track if user manually overrode calendar mode
+      _userOverrodeCalendarMode: { type: Boolean },
     };
   }
 
@@ -151,6 +157,11 @@ class SimpleChoresCard extends LitElement {
     };
     // Loading state
     this._isLoading = false;
+    // Calendar mode: 'grid' or 'agenda' (auto-detected based on width)
+    this._calendarMode = 'grid';
+    this._cardWidth = 0;
+    this._resizeObserver = null;
+    this._userOverrodeCalendarMode = false;
     // Performance caching
     this._cache = {
       rooms: { data: null, lastUpdate: 0, ttl: this.constructor.constants.ROOM_CACHE_TTL },
@@ -202,6 +213,35 @@ class SimpleChoresCard extends LitElement {
     super.disconnectedCallback();
     // Remove keyboard event listener
     document.removeEventListener('keydown', this._handleKeydown);
+    // Clean up ResizeObserver
+    if (this._resizeObserver) {
+      this._resizeObserver.disconnect();
+      this._resizeObserver = null;
+    }
+  }
+
+  firstUpdated() {
+    // Set up ResizeObserver for responsive calendar view
+    this._setupResizeObserver();
+  }
+
+  _setupResizeObserver() {
+    if (this._resizeObserver) return;
+
+    this._resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const width = entry.contentRect.width;
+        this._cardWidth = width;
+        // Auto-switch calendar mode based on width
+        // Under 500px, use agenda view for better readability
+        const newMode = width < 500 ? 'agenda' : 'grid';
+        if (this._calendarMode !== newMode && !this._userOverrodeCalendarMode) {
+          this._calendarMode = newMode;
+        }
+      }
+    });
+
+    this._resizeObserver.observe(this);
   }
 
   _handleKeydown(e) {
@@ -279,7 +319,14 @@ class SimpleChoresCard extends LitElement {
         room: "",
         frequency: "daily",
         dueDate: "",
-        assignedTo: ""
+        assignedTo: "",
+        recurrenceType: "interval",
+        anchorDaysOfWeek: [],
+        anchorType: "day_of_month",
+        anchorDayOfMonth: 1,
+        anchorWeek: 1,
+        anchorWeekday: 1,
+        interval: 1
       },
       completion: {
         choreId: "",
@@ -949,6 +996,150 @@ class SimpleChoresCard extends LitElement {
   }
 
   /**
+   * Get nth weekday of a month
+   * @param {number} year - Year
+   * @param {number} month - Month (0-11)
+   * @param {number} weekday - Day of week (0=Sun, 6=Sat)
+   * @param {number} n - Which occurrence (1=first, 2=second, ..., 5=last)
+   * @returns {Date|null}
+   */
+  _getNthWeekdayOfMonth(year, month, weekday, n) {
+    if (n === 5) {
+      // "Last" occurrence - start from end of month
+      const lastDay = new Date(year, month + 1, 0);
+      for (let d = lastDay.getDate(); d >= 1; d--) {
+        const testDate = new Date(year, month, d);
+        if (testDate.getDay() === weekday) {
+          return testDate;
+        }
+      }
+      return null;
+    }
+
+    // Nth occurrence from start
+    let count = 0;
+    for (let d = 1; d <= 31; d++) {
+      const testDate = new Date(year, month, d);
+      if (testDate.getMonth() !== month) break;
+      if (testDate.getDay() === weekday) {
+        count++;
+        if (count === n) {
+          return testDate;
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Calculate next occurrence for a chore considering anchored recurrence
+   * @param {Object} chore - The chore object with recurrence settings
+   * @param {Date} fromDate - Calculate next occurrence after this date
+   * @returns {Date|null}
+   */
+  _calculateNextOccurrenceForChore(chore, fromDate) {
+    const recurrenceType = chore.recurrence_type || 'interval';
+    const frequency = chore.frequency;
+
+    if (frequency === 'once') {
+      return null;
+    }
+
+    // For interval-based recurrence, use simple calculation
+    if (recurrenceType !== 'anchored') {
+      return this._calculateNextOccurrence(fromDate, frequency);
+    }
+
+    // Anchored recurrence
+    const date = new Date(fromDate);
+    const isWeekly = ['weekly', 'biweekly'].includes(frequency);
+    const isMonthlyPlus = ['monthly', 'bimonthly', 'quarterly', 'biannual', 'yearly'].includes(frequency);
+
+    if (isWeekly && chore.anchor_days_of_week?.length > 0) {
+      // Weekly anchored - find next matching day
+      const anchorDays = [...chore.anchor_days_of_week].sort((a, b) => a - b);
+      const weeksInterval = frequency === 'biweekly' ? 2 : 1;
+
+      // Start searching from next day
+      const searchDate = new Date(date);
+      searchDate.setDate(searchDate.getDate() + 1);
+
+      // Search up to 8 weeks ahead
+      for (let i = 0; i < 56; i++) {
+        const dayOfWeek = searchDate.getDay();
+        if (anchorDays.includes(dayOfWeek)) {
+          // Check if this is within the correct week interval
+          const daysDiff = Math.floor((searchDate - date) / (1000 * 60 * 60 * 24));
+          const weeksDiff = Math.floor(daysDiff / 7);
+          if (weeksDiff % weeksInterval === 0 || daysDiff < 7) {
+            return searchDate;
+          }
+        }
+        searchDate.setDate(searchDate.getDate() + 1);
+      }
+      return null;
+    }
+
+    if (isMonthlyPlus) {
+      const anchorType = chore.anchor_type || 'day_of_month';
+      let monthsInterval = 1;
+      switch (frequency) {
+        case 'bimonthly': monthsInterval = 2; break;
+        case 'quarterly': monthsInterval = 3; break;
+        case 'biannual': monthsInterval = 6; break;
+        case 'yearly': monthsInterval = 12; break;
+      }
+
+      if (anchorType === 'day_of_month') {
+        const anchorDay = chore.anchor_day_of_month || 1;
+        let year = date.getFullYear();
+        let month = date.getMonth();
+
+        // Check if we can still hit the anchor day this month
+        const thisMonthAnchor = new Date(year, month, Math.min(anchorDay, new Date(year, month + 1, 0).getDate()));
+        if (thisMonthAnchor > date) {
+          return thisMonthAnchor;
+        }
+
+        // Move to next interval
+        month += monthsInterval;
+        if (month > 11) {
+          year += Math.floor(month / 12);
+          month = month % 12;
+        }
+
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        return new Date(year, month, Math.min(anchorDay, daysInMonth));
+      }
+
+      if (anchorType === 'week_pattern') {
+        const anchorWeek = chore.anchor_week || 1;
+        const anchorWeekday = chore.anchor_weekday ?? 1;
+        let year = date.getFullYear();
+        let month = date.getMonth();
+
+        // Check this month first
+        const thisMonthDate = this._getNthWeekdayOfMonth(year, month, anchorWeekday, anchorWeek);
+        if (thisMonthDate && thisMonthDate > date) {
+          return thisMonthDate;
+        }
+
+        // Move to next interval
+        month += monthsInterval;
+        if (month > 11) {
+          year += Math.floor(month / 12);
+          month = month % 12;
+        }
+
+        return this._getNthWeekdayOfMonth(year, month, anchorWeekday, anchorWeek);
+      }
+    }
+
+    // Fallback to interval-based
+    return this._calculateNextOccurrence(fromDate, frequency);
+  }
+
+  /**
    * Generate simulated future occurrences for a chore.
    * @param {Object} chore - The chore object
    * @param {Date} endDate - The end date to generate occurrences until
@@ -964,7 +1155,7 @@ class SimpleChoresCard extends LitElement {
     }
 
     const startDate = new Date(chore.next_due || chore.due_date);
-    let currentDate = this._calculateNextOccurrence(startDate, frequency);
+    let currentDate = this._calculateNextOccurrenceForChore(chore, startDate);
 
     // Generate up to 12 future occurrences or until endDate
     let count = 0;
@@ -977,7 +1168,7 @@ class SimpleChoresCard extends LitElement {
         isProjected: true, // Flag to indicate this is a simulated occurrence
       });
 
-      currentDate = this._calculateNextOccurrence(currentDate, frequency);
+      currentDate = this._calculateNextOccurrenceForChore(chore, currentDate);
       count++;
     }
 
@@ -1094,70 +1285,19 @@ class SimpleChoresCard extends LitElement {
           <button @click=${this._nextMonth} class="calendar-nav-btn">
             <ha-icon icon="mdi:chevron-right"></ha-icon>
           </button>
+          <button
+            @click=${this._toggleCalendarMode}
+            class="calendar-mode-btn"
+            title="${this._calendarMode === 'grid' ? 'Switch to Agenda View' : 'Switch to Grid View'}"
+          >
+            <ha-icon icon="${this._calendarMode === 'grid' ? 'mdi:view-agenda' : 'mdi:calendar-month'}"></ha-icon>
+          </button>
         </div>
 
-        <div class="calendar-grid">
-          ${dayNames.map(day => html`
-            <div class="calendar-day-header">${day}</div>
-          `)}
-
-          ${weeks.map(week => week.map(day => {
-            if (!day) {
-              return html`<div class="calendar-cell empty"></div>`;
-            }
-
-            const dateStr = `${this._calendarYear}-${String(this._calendarMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-            const choresOnDate = choresByDate[dateStr] || [];
-            const completedOnDate = completedByDate[dateStr] || [];
-            const isToday = dateStr === todayStr;
-            const isPast = new Date(dateStr) < new Date(todayStr);
-
-            return html`
-              <div
-                class="calendar-cell ${isToday ? 'today' : ''} ${isPast ? 'past' : ''}"
-                data-date="${dateStr}"
-                @dragover=${this._handleDragOver}
-                @drop=${this._handleDrop}
-              >
-                <div class="calendar-day-number">${day}</div>
-                <div class="calendar-chores">
-                  ${choresOnDate.map(chore => {
-                    const isProjected = chore.isProjected || false;
-                    const isOverdue = isPast && !isProjected;
-                    const roomName = chore.room_name || this._getRoomName(chore.room_id) || '';
-                    return html`
-                      <div
-                        class="calendar-chore ${isOverdue ? 'overdue' : ''} ${isProjected ? 'projected' : ''}"
-                        draggable="${isProjected ? 'false' : 'true'}"
-                        @dragstart=${(e) => isProjected ? e.preventDefault() : this._handleDragStart(e, chore)}
-                        @click=${() => isProjected ? null : this._openCompleteChoreModal(chore)}
-                        title="${chore.name}${roomName ? ` - ${roomName}` : ''}${isProjected ? ' (Projected)' : ''}"
-                      >
-                        <span class="calendar-chore-name">${chore.name}</span>
-                        ${roomName ? html`<span class="calendar-chore-room">${roomName}</span>` : ''}
-                      </div>
-                    `;
-                  })}
-                  ${completedOnDate.map(completed => {
-                    const roomName = completed.room_name || '';
-                    return html`
-                      <div
-                        class="calendar-chore completed"
-                        title="${completed.name}${roomName ? ` - ${roomName}` : ''} - Completed${completed.completed_by_name ? ` by ${completed.completed_by_name}` : ''}"
-                      >
-                        <div class="calendar-chore-content">
-                          <ha-icon icon="mdi:check" class="completed-icon"></ha-icon>
-                          <span class="calendar-chore-name">${completed.name}</span>
-                        </div>
-                        ${roomName ? html`<span class="calendar-chore-room">${roomName}</span>` : ''}
-                      </div>
-                    `;
-                  })}
-                </div>
-              </div>
-            `;
-          }))}
-        </div>
+        ${this._calendarMode === 'agenda'
+          ? this._renderAgendaContent(choresByDate, completedByDate, todayStr, daysInMonth)
+          : this._renderGridContent(weeks, dayNames, choresByDate, completedByDate, todayStr)
+        }
 
         <div class="calendar-legend">
           <span class="legend-item">
@@ -1196,6 +1336,162 @@ class SimpleChoresCard extends LitElement {
     } else {
       this._calendarMonth++;
     }
+  }
+
+  _toggleCalendarMode() {
+    this._calendarMode = this._calendarMode === 'grid' ? 'agenda' : 'grid';
+    this._userOverrodeCalendarMode = true;
+  }
+
+  _renderGridContent(weeks, dayNames, choresByDate, completedByDate, todayStr) {
+    return html`
+      <div class="calendar-grid">
+        ${dayNames.map(day => html`
+          <div class="calendar-day-header">${day}</div>
+        `)}
+
+        ${weeks.map(week => week.map(day => {
+          if (!day) {
+            return html`<div class="calendar-cell empty"></div>`;
+          }
+
+          const dateStr = `${this._calendarYear}-${String(this._calendarMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          const choresOnDate = choresByDate[dateStr] || [];
+          const completedOnDate = completedByDate[dateStr] || [];
+          const isToday = dateStr === todayStr;
+          const isPast = new Date(dateStr) < new Date(todayStr);
+
+          return html`
+            <div
+              class="calendar-cell ${isToday ? 'today' : ''} ${isPast ? 'past' : ''}"
+              data-date="${dateStr}"
+              @dragover=${this._handleDragOver}
+              @drop=${this._handleDrop}
+            >
+              <div class="calendar-day-number">${day}</div>
+              <div class="calendar-chores">
+                ${choresOnDate.map(chore => {
+                  const isProjected = chore.isProjected || false;
+                  const isOverdue = isPast && !isProjected;
+                  const roomName = chore.room_name || this._getRoomName(chore.room_id) || '';
+                  return html`
+                    <div
+                      class="calendar-chore ${isOverdue ? 'overdue' : ''} ${isProjected ? 'projected' : ''}"
+                      draggable="${isProjected ? 'false' : 'true'}"
+                      @dragstart=${(e) => isProjected ? e.preventDefault() : this._handleDragStart(e, chore)}
+                      @click=${() => isProjected ? null : this._openCompleteChoreModal(chore)}
+                      title="${chore.name}${roomName ? ` - ${roomName}` : ''}${isProjected ? ' (Projected)' : ''}"
+                    >
+                      <span class="calendar-chore-name">${chore.name}</span>
+                      ${roomName ? html`<span class="calendar-chore-room">${roomName}</span>` : ''}
+                    </div>
+                  `;
+                })}
+                ${completedOnDate.map(completed => {
+                  const roomName = completed.room_name || '';
+                  return html`
+                    <div
+                      class="calendar-chore completed"
+                      title="${completed.name}${roomName ? ` - ${roomName}` : ''} - Completed${completed.completed_by_name ? ` by ${completed.completed_by_name}` : ''}"
+                    >
+                      <div class="calendar-chore-content">
+                        <ha-icon icon="mdi:check" class="completed-icon"></ha-icon>
+                        <span class="calendar-chore-name">${completed.name}</span>
+                      </div>
+                      ${roomName ? html`<span class="calendar-chore-room">${roomName}</span>` : ''}
+                    </div>
+                  `;
+                })}
+              </div>
+            </div>
+          `;
+        }))}
+      </div>
+    `;
+  }
+
+  _renderAgendaContent(choresByDate, completedByDate, todayStr, daysInMonth) {
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const today = new Date(todayStr);
+
+    // Build array of all days in the month
+    const allDays = [];
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = `${this._calendarYear}-${String(this._calendarMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const choresOnDate = choresByDate[dateStr] || [];
+      const completedOnDate = completedByDate[dateStr] || [];
+
+      const dateObj = new Date(dateStr);
+      const isPast = dateObj < today;
+      const isToday = dateStr === todayStr;
+      const dayOfWeek = dayNames[dateObj.getDay()];
+
+      allDays.push({
+        day,
+        dateStr,
+        dayOfWeek,
+        isToday,
+        isPast,
+        chores: choresOnDate,
+        completed: completedOnDate,
+        hasContent: choresOnDate.length > 0 || completedOnDate.length > 0
+      });
+    }
+
+    return html`
+      <div class="agenda-view">
+        ${allDays.map(dayData => html`
+          <div class="agenda-day ${dayData.isToday ? 'today' : ''} ${dayData.isPast ? 'past' : ''} ${!dayData.hasContent ? 'empty' : ''}">
+            <div class="agenda-day-header">
+              <span class="agenda-day-name">${dayData.dayOfWeek}</span>
+              <span class="agenda-day-date">${dayData.day}</span>
+              ${dayData.isToday ? html`<span class="agenda-today-badge">Today</span>` : ''}
+            </div>
+            ${dayData.hasContent ? html`
+              <div class="agenda-chores">
+                ${dayData.chores.map(chore => {
+                  const isProjected = chore.isProjected || false;
+                  const isOverdue = dayData.isPast && !isProjected;
+                  const roomName = chore.room_name || this._getRoomName(chore.room_id) || '';
+                  return html`
+                    <div
+                      class="agenda-chore ${isOverdue ? 'overdue' : ''} ${isProjected ? 'projected' : ''}"
+                      @click=${() => isProjected ? null : this._openCompleteChoreModal(chore)}
+                    >
+                      <div class="agenda-chore-indicator ${isOverdue ? 'overdue' : ''} ${isProjected ? 'projected' : ''}"></div>
+                      <div class="agenda-chore-content">
+                        <span class="agenda-chore-name">${chore.name}</span>
+                        ${roomName ? html`<span class="agenda-chore-room">${roomName}</span>` : ''}
+                        ${isProjected ? html`<span class="agenda-chore-projected-badge">Projected</span>` : ''}
+                      </div>
+                      ${!isProjected ? html`
+                        <button class="agenda-chore-complete" @click=${(e) => { e.stopPropagation(); this._openCompleteChoreModal(chore); }} title="Complete">
+                          <ha-icon icon="mdi:check"></ha-icon>
+                        </button>
+                      ` : ''}
+                    </div>
+                  `;
+                })}
+                ${dayData.completed.map(completed => {
+                  const roomName = completed.room_name || '';
+                  return html`
+                    <div class="agenda-chore completed">
+                      <div class="agenda-chore-indicator completed"></div>
+                      <div class="agenda-chore-content">
+                        <span class="agenda-chore-name">${completed.name}</span>
+                        ${roomName ? html`<span class="agenda-chore-room">${roomName}</span>` : ''}
+                        ${completed.completed_by_name ? html`<span class="agenda-chore-by">by ${completed.completed_by_name}</span>` : ''}
+                      </div>
+                      <ha-icon icon="mdi:check-circle" class="agenda-completed-icon"></ha-icon>
+                    </div>
+                  `;
+                })}
+              </div>
+            ` : ''}
+          </div>
+        `)}
+      </div>
+    `;
   }
 
   _handleDragStart(e, chore) {
@@ -2018,6 +2314,207 @@ class SimpleChoresCard extends LitElement {
     this._handleFormInput('chore', 'assignedTo', e.target.value);
   }
 
+  _handleRecurrenceTypeChange(e) {
+    this._handleFormInput('chore', 'recurrenceType', e.target.value);
+    this.requestUpdate();
+  }
+
+  _handleAnchorDayToggle(day) {
+    const currentDays = [...(this._formData.chore.anchorDaysOfWeek || [])];
+    const index = currentDays.indexOf(day);
+    if (index >= 0) {
+      currentDays.splice(index, 1);
+    } else {
+      currentDays.push(day);
+      currentDays.sort((a, b) => a - b);
+    }
+    this._handleFormInput('chore', 'anchorDaysOfWeek', currentDays);
+    this.requestUpdate();
+  }
+
+  _handleAnchorTypeChange(e) {
+    this._handleFormInput('chore', 'anchorType', e.target.value);
+    this.requestUpdate();
+  }
+
+  _handleAnchorDayOfMonthChange(e) {
+    this._handleFormInput('chore', 'anchorDayOfMonth', parseInt(e.target.value, 10));
+  }
+
+  _handleAnchorWeekChange(e) {
+    this._handleFormInput('chore', 'anchorWeek', parseInt(e.target.value, 10));
+  }
+
+  _handleAnchorWeekdayChange(e) {
+    this._handleFormInput('chore', 'anchorWeekday', parseInt(e.target.value, 10));
+  }
+
+  _handleIntervalChange(e) {
+    this._handleFormInput('chore', 'interval', parseInt(e.target.value, 10) || 1);
+  }
+
+  _renderRecurrenceOptions(prefix) {
+    const frequency = this._formData.chore.frequency;
+    const recurrenceType = this._formData.chore.recurrenceType || 'interval';
+
+    // Only show recurrence options for frequencies where it makes sense
+    const showRecurrence = ['weekly', 'biweekly', 'monthly', 'bimonthly', 'quarterly', 'biannual', 'yearly'].includes(frequency);
+
+    if (!showRecurrence) {
+      return html``;
+    }
+
+    const isWeekly = ['weekly', 'biweekly'].includes(frequency);
+    const isMonthlyPlus = ['monthly', 'bimonthly', 'quarterly', 'biannual', 'yearly'].includes(frequency);
+
+    const weekdays = [
+      { value: 0, label: 'Sun' },
+      { value: 1, label: 'Mon' },
+      { value: 2, label: 'Tue' },
+      { value: 3, label: 'Wed' },
+      { value: 4, label: 'Thu' },
+      { value: 5, label: 'Fri' },
+      { value: 6, label: 'Sat' }
+    ];
+
+    const weekdaysFull = [
+      { value: 0, label: 'Sunday' },
+      { value: 1, label: 'Monday' },
+      { value: 2, label: 'Tuesday' },
+      { value: 3, label: 'Wednesday' },
+      { value: 4, label: 'Thursday' },
+      { value: 5, label: 'Friday' },
+      { value: 6, label: 'Saturday' }
+    ];
+
+    const weekOrdinals = [
+      { value: 1, label: 'First' },
+      { value: 2, label: 'Second' },
+      { value: 3, label: 'Third' },
+      { value: 4, label: 'Fourth' },
+      { value: 5, label: 'Last' }
+    ];
+
+    return html`
+      <div class="form-group recurrence-section">
+        <label>Recurrence Pattern</label>
+        <div class="recurrence-type-toggle">
+          <label class="radio-label">
+            <input
+              type="radio"
+              name="${prefix}-recurrence-type"
+              value="interval"
+              ?checked=${recurrenceType === 'interval'}
+              @change=${this._handleRecurrenceTypeChange}
+            />
+            <span>From completion date</span>
+          </label>
+          <label class="radio-label">
+            <input
+              type="radio"
+              name="${prefix}-recurrence-type"
+              value="anchored"
+              ?checked=${recurrenceType === 'anchored'}
+              @change=${this._handleRecurrenceTypeChange}
+            />
+            <span>On specific days</span>
+          </label>
+        </div>
+        <small class="recurrence-help">
+          ${recurrenceType === 'interval'
+            ? 'Next occurrence calculated from when the chore is completed'
+            : 'Always occurs on the same day(s) regardless of completion date'}
+        </small>
+
+        ${recurrenceType === 'anchored' ? html`
+          <div class="anchor-options">
+            ${isWeekly ? html`
+              <div class="weekday-picker">
+                <label>Select days:</label>
+                <div class="weekday-buttons">
+                  ${weekdays.map(day => html`
+                    <button
+                      type="button"
+                      class="weekday-btn ${(this._formData.chore.anchorDaysOfWeek || []).includes(day.value) ? 'selected' : ''}"
+                      @click=${() => this._handleAnchorDayToggle(day.value)}
+                    >
+                      ${day.label}
+                    </button>
+                  `)}
+                </div>
+              </div>
+            ` : ''}
+
+            ${isMonthlyPlus ? html`
+              <div class="monthly-options">
+                <label>Occurs on:</label>
+                <div class="anchor-type-select">
+                  <label class="radio-label">
+                    <input
+                      type="radio"
+                      name="${prefix}-anchor-type"
+                      value="day_of_month"
+                      ?checked=${this._formData.chore.anchorType === 'day_of_month'}
+                      @change=${this._handleAnchorTypeChange}
+                    />
+                    <span>Day of month</span>
+                  </label>
+                  <label class="radio-label">
+                    <input
+                      type="radio"
+                      name="${prefix}-anchor-type"
+                      value="week_pattern"
+                      ?checked=${this._formData.chore.anchorType === 'week_pattern'}
+                      @change=${this._handleAnchorTypeChange}
+                    />
+                    <span>Week pattern</span>
+                  </label>
+                </div>
+
+                ${this._formData.chore.anchorType === 'day_of_month' ? html`
+                  <div class="day-of-month-picker">
+                    <label>Day:</label>
+                    <select
+                      @change=${this._handleAnchorDayOfMonthChange}
+                      .value=${String(this._formData.chore.anchorDayOfMonth || 1)}
+                    >
+                      ${Array.from({length: 31}, (_, i) => i + 1).map(day => html`
+                        <option value=${day} ?selected=${this._formData.chore.anchorDayOfMonth === day}>${day}</option>
+                      `)}
+                    </select>
+                    <small>If month has fewer days, uses last day of month</small>
+                  </div>
+                ` : html`
+                  <div class="week-pattern-picker">
+                    <div class="pattern-row">
+                      <select
+                        @change=${this._handleAnchorWeekChange}
+                        .value=${String(this._formData.chore.anchorWeek || 1)}
+                      >
+                        ${weekOrdinals.map(ord => html`
+                          <option value=${ord.value} ?selected=${this._formData.chore.anchorWeek === ord.value}>${ord.label}</option>
+                        `)}
+                      </select>
+                      <select
+                        @change=${this._handleAnchorWeekdayChange}
+                        .value=${String(this._formData.chore.anchorWeekday || 1)}
+                      >
+                        ${weekdaysFull.map(day => html`
+                          <option value=${day.value} ?selected=${this._formData.chore.anchorWeekday === day.value}>${day.label}</option>
+                        `)}
+                      </select>
+                    </div>
+                    <small>e.g., "Second Tuesday" of each month</small>
+                  </div>
+                `}
+              </div>
+            ` : ''}
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
   _renderAddUserModal() {
     if (!this._showAddUserModal) {
       return html``;
@@ -2287,6 +2784,7 @@ class SimpleChoresCard extends LitElement {
                 <option value="yearly">Yearly</option>
               </select>
             </div>
+            ${this._renderRecurrenceOptions('add')}
             <div class="form-group">
               <label for="chore-due-date">Due Date (optional)</label>
               <input 
@@ -2351,7 +2849,14 @@ class SimpleChoresCard extends LitElement {
       room: roomId,
       frequency: chore.frequency || "daily",
       dueDate: chore.next_due || chore.due_date || "",
-      assignedTo: chore.assigned_to || ""
+      assignedTo: chore.assigned_to || "",
+      recurrenceType: chore.recurrence_type || "interval",
+      anchorDaysOfWeek: chore.anchor_days_of_week || [],
+      anchorType: chore.anchor_type || "day_of_month",
+      anchorDayOfMonth: chore.anchor_day_of_month || 1,
+      anchorWeek: chore.anchor_week || 1,
+      anchorWeekday: chore.anchor_weekday || 1,
+      interval: chore.interval || 1
     };
 
 
@@ -2478,6 +2983,7 @@ class SimpleChoresCard extends LitElement {
                 <option value="yearly">Yearly</option>
               </select>
             </div>
+            ${this._renderRecurrenceOptions('edit')}
             <div class="form-group">
               <label for="edit-chore-due-date">Due Date</label>
               <input 
@@ -2638,7 +3144,14 @@ class SimpleChoresCard extends LitElement {
       room: roomId,
       frequency: chore.frequency || "daily",
       dueDate: chore.next_due || chore.due_date || "",
-      assignedTo: chore.assigned_to || ""
+      assignedTo: chore.assigned_to || "",
+      recurrenceType: chore.recurrence_type || "interval",
+      anchorDaysOfWeek: chore.anchor_days_of_week || [],
+      anchorType: chore.anchor_type || "day_of_month",
+      anchorDayOfMonth: chore.anchor_day_of_month || 1,
+      anchorWeek: chore.anchor_week || 1,
+      anchorWeekday: chore.anchor_weekday || 1,
+      interval: chore.interval || 1
     };
 
 
@@ -2814,6 +3327,25 @@ class SimpleChoresCard extends LitElement {
         serviceData.assigned_to = choreData.assignedTo.trim();
       }
 
+      // Add recurrence fields
+      serviceData.recurrence_type = choreData.recurrenceType || 'interval';
+      if (choreData.recurrenceType === 'anchored') {
+        // Weekly anchored - days of week
+        if (['weekly', 'biweekly'].includes(choreData.frequency) && choreData.anchorDaysOfWeek?.length > 0) {
+          serviceData.anchor_days_of_week = choreData.anchorDaysOfWeek;
+        }
+        // Monthly+ anchored - anchor type and related fields
+        if (['monthly', 'bimonthly', 'quarterly', 'biannual', 'yearly'].includes(choreData.frequency)) {
+          serviceData.anchor_type = choreData.anchorType || 'day_of_month';
+          if (choreData.anchorType === 'day_of_month') {
+            serviceData.anchor_day_of_month = choreData.anchorDayOfMonth || 1;
+          } else if (choreData.anchorType === 'week_pattern') {
+            serviceData.anchor_week = choreData.anchorWeek || 1;
+            serviceData.anchor_weekday = choreData.anchorWeekday || 1;
+          }
+        }
+      }
+
       await this.hass.callService("simple_chores", "add_chore", serviceData);
       this._showToast("Chore created successfully!");
       this._closeAddChoreModal();
@@ -2856,6 +3388,25 @@ class SimpleChoresCard extends LitElement {
       // Add assigned_to if provided
       if (choreData.assignedTo?.trim()) {
         serviceData.assigned_to = choreData.assignedTo.trim();
+      }
+
+      // Add recurrence fields
+      serviceData.recurrence_type = choreData.recurrenceType || 'interval';
+      if (choreData.recurrenceType === 'anchored') {
+        // Weekly anchored - days of week
+        if (['weekly', 'biweekly'].includes(choreData.frequency) && choreData.anchorDaysOfWeek?.length > 0) {
+          serviceData.anchor_days_of_week = choreData.anchorDaysOfWeek;
+        }
+        // Monthly+ anchored - anchor type and related fields
+        if (['monthly', 'bimonthly', 'quarterly', 'biannual', 'yearly'].includes(choreData.frequency)) {
+          serviceData.anchor_type = choreData.anchorType || 'day_of_month';
+          if (choreData.anchorType === 'day_of_month') {
+            serviceData.anchor_day_of_month = choreData.anchorDayOfMonth || 1;
+          } else if (choreData.anchorType === 'week_pattern') {
+            serviceData.anchor_week = choreData.anchorWeek || 1;
+            serviceData.anchor_weekday = choreData.anchorWeekday || 1;
+          }
+        }
       }
 
       await this.hass.callService("simple_chores", "update_chore", serviceData);
@@ -3468,7 +4019,7 @@ class SimpleChoresCard extends LitElement {
       .calendar-header {
         display: flex;
         align-items: center;
-        justify-content: space-between;
+        gap: 12px;
         padding: 16px 0;
         margin-bottom: 16px;
         border-bottom: 1px solid var(--divider-color);
@@ -3478,6 +4029,8 @@ class SimpleChoresCard extends LitElement {
         margin: 0;
         font-size: 1.25rem;
         font-weight: 500;
+        flex: 1;
+        text-align: center;
       }
 
       .calendar-nav-btn {
@@ -3678,6 +4231,231 @@ class SimpleChoresCard extends LitElement {
         background: var(--primary-color);
         opacity: 0.5;
         border-style: dashed;
+      }
+
+      /* Calendar mode toggle button */
+      .calendar-mode-btn {
+        background: transparent;
+        border: none;
+        color: inherit;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 4px;
+        margin-left: auto;
+        opacity: 0.8;
+        transition: opacity 0.2s, background 0.2s;
+      }
+
+      .calendar-mode-btn:hover {
+        opacity: 1;
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      .calendar-mode-btn ha-icon {
+        --mdc-icon-size: 20px;
+      }
+
+      /* Agenda view styles */
+      .agenda-view {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-height: 500px;
+        overflow-y: auto;
+        padding: 8px 0;
+      }
+
+      .agenda-empty {
+        text-align: center;
+        padding: 32px 16px;
+        color: var(--secondary-text-color);
+        font-style: italic;
+      }
+
+      .agenda-day {
+        background: var(--card-background-color);
+        border-radius: 8px;
+        overflow: hidden;
+        border: 1px solid var(--divider-color);
+      }
+
+      .agenda-day.today {
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 1px var(--primary-color);
+      }
+
+      .agenda-day.past {
+        opacity: 0.7;
+      }
+
+      .agenda-day.empty {
+        opacity: 0.6;
+      }
+
+      .agenda-day.empty .agenda-day-header {
+        border-bottom: none;
+        padding: 8px 12px;
+      }
+
+      .agenda-day-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        background: var(--secondary-background-color);
+        border-bottom: 1px solid var(--divider-color);
+      }
+
+      .agenda-day-name {
+        font-weight: 500;
+        font-size: 0.9rem;
+      }
+
+      .agenda-day-date {
+        color: var(--secondary-text-color);
+        font-size: 0.85rem;
+      }
+
+      .agenda-today-badge {
+        background: var(--primary-color);
+        color: var(--text-primary-color);
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 0.7rem;
+        font-weight: 500;
+        margin-left: auto;
+      }
+
+      .agenda-chores {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .agenda-chore {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        border-bottom: 1px solid var(--divider-color);
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+
+      .agenda-chore:last-child {
+        border-bottom: none;
+      }
+
+      .agenda-chore:hover {
+        background: rgba(var(--rgb-primary-color), 0.05);
+      }
+
+      .agenda-chore.projected {
+        opacity: 0.6;
+        cursor: default;
+      }
+
+      .agenda-chore.projected:hover {
+        background: transparent;
+      }
+
+      .agenda-chore-indicator {
+        width: 4px;
+        height: 32px;
+        border-radius: 2px;
+        background: var(--primary-color);
+        flex-shrink: 0;
+      }
+
+      .agenda-chore-indicator.overdue {
+        background: var(--error-color);
+      }
+
+      .agenda-chore-indicator.projected {
+        background: var(--primary-color);
+        opacity: 0.5;
+      }
+
+      .agenda-chore-indicator.completed {
+        background: var(--success-color, #4CAF50);
+      }
+
+      .agenda-chore-content {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .agenda-chore-name {
+        font-size: 0.95rem;
+        font-weight: 500;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .agenda-chore.completed .agenda-chore-name {
+        text-decoration: line-through;
+        opacity: 0.7;
+      }
+
+      .agenda-chore-room {
+        font-size: 0.8rem;
+        color: var(--secondary-text-color);
+      }
+
+      .agenda-chore-by {
+        font-size: 0.75rem;
+        color: var(--secondary-text-color);
+        font-style: italic;
+      }
+
+      .agenda-chore-projected-badge {
+        display: inline-block;
+        background: var(--primary-color);
+        color: var(--text-primary-color);
+        padding: 1px 6px;
+        border-radius: 8px;
+        font-size: 0.65rem;
+        opacity: 0.7;
+      }
+
+      .agenda-chore-complete {
+        background: var(--primary-color);
+        border: none;
+        color: var(--text-primary-color);
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: transform 0.2s, box-shadow 0.2s;
+        flex-shrink: 0;
+      }
+
+      .agenda-chore-complete:hover {
+        transform: scale(1.1);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      }
+
+      .agenda-chore-complete ha-icon {
+        --mdc-icon-size: 18px;
+      }
+
+      .agenda-completed-icon {
+        color: var(--success-color, #4CAF50);
+        --mdc-icon-size: 24px;
+        flex-shrink: 0;
+      }
+
+      .agenda-no-chores {
+        padding: 12px;
+        color: var(--secondary-text-color);
+        font-style: italic;
+        font-size: 0.85rem;
       }
 
       .room-selector select {
@@ -4284,6 +5062,132 @@ class SimpleChoresCard extends LitElement {
         margin-top: 4px;
         color: var(--secondary-text-color);
         font-size: 12px;
+      }
+
+      /* Recurrence Section Styles */
+      .recurrence-section {
+        background: var(--secondary-background-color);
+        padding: 16px;
+        border-radius: 8px;
+        margin-top: 8px;
+      }
+
+      .recurrence-type-toggle {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-bottom: 8px;
+      }
+
+      .radio-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        font-size: 14px;
+      }
+
+      .radio-label input[type="radio"] {
+        accent-color: var(--primary-color);
+        width: 16px;
+        height: 16px;
+      }
+
+      .recurrence-help {
+        display: block;
+        margin-bottom: 12px;
+        color: var(--secondary-text-color);
+        font-size: 12px;
+        font-style: italic;
+      }
+
+      .anchor-options {
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--divider-color);
+      }
+
+      .weekday-picker label,
+      .monthly-options label {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 13px;
+        font-weight: 500;
+      }
+
+      .weekday-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+
+      .weekday-btn {
+        min-width: 40px;
+        padding: 8px 4px;
+        border: 1px solid var(--divider-color);
+        border-radius: 4px;
+        background: var(--card-background-color);
+        color: var(--primary-text-color);
+        font-size: 12px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+
+      .weekday-btn:hover {
+        border-color: var(--primary-color);
+      }
+
+      .weekday-btn.selected {
+        background: var(--primary-color);
+        border-color: var(--primary-color);
+        color: white;
+      }
+
+      .anchor-type-select {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-bottom: 12px;
+      }
+
+      .day-of-month-picker,
+      .week-pattern-picker {
+        margin-top: 8px;
+      }
+
+      .day-of-month-picker label,
+      .week-pattern-picker label {
+        margin-right: 8px;
+      }
+
+      .day-of-month-picker select,
+      .week-pattern-picker select {
+        padding: 8px 12px;
+        border: 1px solid var(--divider-color);
+        border-radius: 4px;
+        background: var(--card-background-color);
+        color: var(--primary-text-color);
+        font-size: 14px;
+      }
+
+      .pattern-row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .pattern-row select {
+        flex: 1;
+        min-width: 100px;
+      }
+
+      .day-of-month-picker small,
+      .week-pattern-picker small {
+        display: block;
+        margin-top: 6px;
+        color: var(--secondary-text-color);
+        font-size: 11px;
       }
 
       /* Icon Picker Styles */

@@ -28,6 +28,18 @@ from .const import (
     ATTR_START_DATE,
     ATTR_USER_ID,
     ATTR_USER_NAME,
+    # Recurrence attributes
+    ATTR_RECURRENCE_TYPE,
+    ATTR_ANCHOR_DAYS_OF_WEEK,
+    ATTR_ANCHOR_TYPE,
+    ATTR_ANCHOR_DAY_OF_MONTH,
+    ATTR_ANCHOR_WEEK,
+    ATTR_ANCHOR_WEEKDAY,
+    ATTR_INTERVAL,
+    RECURRENCE_TYPES,
+    ANCHOR_TYPES,
+    WEEKDAYS,
+    WEEK_ORDINALS,
     CONF_NOTIFICATION_TIME,
     CONF_NOTIFICATIONS_ENABLED,
     CONF_NOTIFY_TARGETS,
@@ -113,6 +125,18 @@ SERVICE_ADD_CHORE_SCHEMA = vol.Schema(
         vol.Required(ATTR_FREQUENCY): vol.In(FREQUENCIES),
         vol.Optional(ATTR_START_DATE): cv.date,
         vol.Optional(ATTR_ASSIGNED_TO): cv.string,
+        # Recurrence options
+        vol.Optional(ATTR_RECURRENCE_TYPE): vol.In(RECURRENCE_TYPES),
+        vol.Optional(ATTR_ANCHOR_DAYS_OF_WEEK): vol.All(
+            cv.ensure_list, [vol.In(WEEKDAYS)]
+        ),
+        vol.Optional(ATTR_ANCHOR_TYPE): vol.In(ANCHOR_TYPES),
+        vol.Optional(ATTR_ANCHOR_DAY_OF_MONTH): vol.All(
+            vol.Coerce(int), vol.Range(min=1, max=31)
+        ),
+        vol.Optional(ATTR_ANCHOR_WEEK): vol.In(WEEK_ORDINALS),
+        vol.Optional(ATTR_ANCHOR_WEEKDAY): vol.In(WEEKDAYS),
+        vol.Optional(ATTR_INTERVAL): vol.All(vol.Coerce(int), vol.Range(min=1)),
     }
 )
 
@@ -130,6 +154,18 @@ SERVICE_UPDATE_CHORE_SCHEMA = vol.Schema(
         vol.Optional(ATTR_FREQUENCY): vol.In(FREQUENCIES),
         vol.Optional(ATTR_NEXT_DUE): cv.date,
         vol.Optional(ATTR_ASSIGNED_TO): cv.string,
+        # Recurrence options
+        vol.Optional(ATTR_RECURRENCE_TYPE): vol.In(RECURRENCE_TYPES),
+        vol.Optional(ATTR_ANCHOR_DAYS_OF_WEEK): vol.All(
+            cv.ensure_list, [vol.In(WEEKDAYS)]
+        ),
+        vol.Optional(ATTR_ANCHOR_TYPE): vol.In(ANCHOR_TYPES),
+        vol.Optional(ATTR_ANCHOR_DAY_OF_MONTH): vol.All(
+            vol.Coerce(int), vol.Range(min=1, max=31)
+        ),
+        vol.Optional(ATTR_ANCHOR_WEEK): vol.In(WEEK_ORDINALS),
+        vol.Optional(ATTR_ANCHOR_WEEKDAY): vol.In(WEEKDAYS),
+        vol.Optional(ATTR_INTERVAL): vol.All(vol.Coerce(int), vol.Range(min=1)),
     }
 )
 
@@ -305,15 +341,31 @@ class ServiceHandlerFactory:
                 start_date = call.data.get(ATTR_START_DATE)
                 next_due = call.data.get(ATTR_NEXT_DUE)
                 assigned_to = call.data.get(ATTR_ASSIGNED_TO)
+                # Recurrence fields
+                recurrence_type = call.data.get(ATTR_RECURRENCE_TYPE)
+                anchor_days_of_week = call.data.get(ATTR_ANCHOR_DAYS_OF_WEEK)
+                anchor_type = call.data.get(ATTR_ANCHOR_TYPE)
+                anchor_day_of_month = call.data.get(ATTR_ANCHOR_DAY_OF_MONTH)
+                anchor_week = call.data.get(ATTR_ANCHOR_WEEK)
+                anchor_weekday = call.data.get(ATTR_ANCHOR_WEEKDAY)
+                interval = call.data.get(ATTR_INTERVAL)
 
                 if operation == "add":
-                    await self.coordinator.async_add_chore(name, room_id, frequency, start_date, assigned_to)
+                    await self.coordinator.async_add_chore(
+                        name, room_id, frequency, start_date, assigned_to,
+                        recurrence_type, anchor_days_of_week, anchor_type,
+                        anchor_day_of_month, anchor_week, anchor_weekday, interval
+                    )
                     _LOGGER.info("Successfully added chore: %s", name)
                 elif operation == "remove":
                     await self.coordinator.async_remove_chore(chore_id)
                     _LOGGER.info("Successfully removed chore: %s", chore_id)
                 elif operation == "update":
-                    await self.coordinator.async_update_chore(chore_id, name, room_id, frequency, next_due, assigned_to)
+                    await self.coordinator.async_update_chore(
+                        chore_id, name, room_id, frequency, next_due, assigned_to,
+                        recurrence_type, anchor_days_of_week, anchor_type,
+                        anchor_day_of_month, anchor_week, anchor_weekday, interval
+                    )
                     _LOGGER.info("Successfully updated chore: %s", chore_id)
                 elif operation == "complete":
                     user_id = call.data.get(ATTR_USER_ID)

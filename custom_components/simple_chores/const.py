@@ -30,6 +30,58 @@ FREQUENCIES: Final = [
     FREQUENCY_YEARLY,
 ]
 
+# Recurrence types
+RECURRENCE_INTERVAL: Final = "interval"  # Every N days/weeks/months from completion
+RECURRENCE_ANCHORED: Final = "anchored"  # Specific days (every Tuesday, 15th of month, etc.)
+
+RECURRENCE_TYPES: Final = [
+    RECURRENCE_INTERVAL,
+    RECURRENCE_ANCHORED,
+]
+
+# Anchor types for monthly/yearly recurrence
+ANCHOR_DAY_OF_MONTH: Final = "day_of_month"  # e.g., 15th of every month
+ANCHOR_WEEK_PATTERN: Final = "week_pattern"  # e.g., 2nd Tuesday of every month
+
+ANCHOR_TYPES: Final = [
+    ANCHOR_DAY_OF_MONTH,
+    ANCHOR_WEEK_PATTERN,
+]
+
+# Week ordinals for week_pattern (1st, 2nd, 3rd, 4th, last)
+WEEK_FIRST: Final = 1
+WEEK_SECOND: Final = 2
+WEEK_THIRD: Final = 3
+WEEK_FOURTH: Final = 4
+WEEK_LAST: Final = 5  # Special value for "last X of month"
+
+WEEK_ORDINALS: Final = [
+    WEEK_FIRST,
+    WEEK_SECOND,
+    WEEK_THIRD,
+    WEEK_FOURTH,
+    WEEK_LAST,
+]
+
+# Days of week (Sunday = 0, Saturday = 6)
+WEEKDAY_SUNDAY: Final = 0
+WEEKDAY_MONDAY: Final = 1
+WEEKDAY_TUESDAY: Final = 2
+WEEKDAY_WEDNESDAY: Final = 3
+WEEKDAY_THURSDAY: Final = 4
+WEEKDAY_FRIDAY: Final = 5
+WEEKDAY_SATURDAY: Final = 6
+
+WEEKDAYS: Final = [
+    WEEKDAY_SUNDAY,
+    WEEKDAY_MONDAY,
+    WEEKDAY_TUESDAY,
+    WEEKDAY_WEDNESDAY,
+    WEEKDAY_THURSDAY,
+    WEEKDAY_FRIDAY,
+    WEEKDAY_SATURDAY,
+]
+
 # Room prefixes
 ROOM_PREFIX_AREA: Final = "area_"
 ROOM_PREFIX_CUSTOM: Final = "custom_"
@@ -64,6 +116,15 @@ ATTR_AVATAR: Final = "avatar"
 ATTR_ASSIGNED_TO: Final = "assigned_to"
 ATTR_START_DATE: Final = "start_date"
 ATTR_NEXT_DUE: Final = "next_due"
+
+# Recurrence attributes
+ATTR_RECURRENCE_TYPE: Final = "recurrence_type"
+ATTR_ANCHOR_DAYS_OF_WEEK: Final = "anchor_days_of_week"
+ATTR_ANCHOR_TYPE: Final = "anchor_type"
+ATTR_ANCHOR_DAY_OF_MONTH: Final = "anchor_day_of_month"
+ATTR_ANCHOR_WEEK: Final = "anchor_week"
+ATTR_ANCHOR_WEEKDAY: Final = "anchor_weekday"
+ATTR_INTERVAL: Final = "interval"
 
 # Config
 CONF_NOTIFICATIONS_ENABLED: Final = "notifications_enabled"
