@@ -4328,20 +4328,23 @@ class SimpleChoresCard extends LitElement {
       .agenda-empty {
         text-align: center;
         padding: 32px 16px;
-        color: var(--secondary-text-color);
+        color: var(--secondary-text-color, #888);
         font-style: italic;
       }
 
       .agenda-day {
-        background: var(--card-background-color);
+        display: flex;
+        flex-direction: column;
+        background: var(--card-background-color, #fff);
         border-radius: 8px;
         overflow: hidden;
-        border: 1px solid var(--divider-color);
+        border: 1px solid var(--divider-color, #e0e0e0);
+        box-sizing: border-box;
       }
 
       .agenda-day.today {
-        border-color: var(--primary-color);
-        box-shadow: 0 0 0 1px var(--primary-color);
+        border-color: var(--primary-color, #03a9f4);
+        box-shadow: 0 0 0 1px var(--primary-color, #03a9f4);
       }
 
       .agenda-day.past {
@@ -4362,23 +4365,24 @@ class SimpleChoresCard extends LitElement {
         align-items: center;
         gap: 8px;
         padding: 10px 12px;
-        background: var(--secondary-background-color);
-        border-bottom: 1px solid var(--divider-color);
+        background: var(--secondary-background-color, #fafafa);
+        border-bottom: 1px solid var(--divider-color, #e0e0e0);
       }
 
       .agenda-day-name {
         font-weight: 500;
         font-size: 0.9rem;
+        color: var(--primary-text-color, #212121);
       }
 
       .agenda-day-date {
-        color: var(--secondary-text-color);
+        color: var(--secondary-text-color, #888);
         font-size: 0.85rem;
       }
 
       .agenda-today-badge {
-        background: var(--primary-color);
-        color: var(--text-primary-color);
+        background: var(--primary-color, #03a9f4);
+        color: var(--text-primary-color, #fff);
         padding: 2px 8px;
         border-radius: 12px;
         font-size: 0.7rem;
@@ -4389,6 +4393,8 @@ class SimpleChoresCard extends LitElement {
       .agenda-chores {
         display: flex;
         flex-direction: column;
+        width: 100%;
+        box-sizing: border-box;
       }
 
       .agenda-chore {
@@ -4396,9 +4402,12 @@ class SimpleChoresCard extends LitElement {
         align-items: center;
         gap: 12px;
         padding: 12px;
-        border-bottom: 1px solid var(--divider-color);
+        border-bottom: 1px solid var(--divider-color, #e0e0e0);
         cursor: pointer;
         transition: background 0.2s;
+        color: var(--primary-text-color, #212121);
+        box-sizing: border-box;
+        width: 100%;
       }
 
       .agenda-chore:last-child {
@@ -4406,7 +4415,7 @@ class SimpleChoresCard extends LitElement {
       }
 
       .agenda-chore:hover {
-        background: rgba(var(--rgb-primary-color), 0.05);
+        background: rgba(3, 169, 244, 0.05);
       }
 
       .agenda-chore.projected {
@@ -4422,16 +4431,16 @@ class SimpleChoresCard extends LitElement {
         width: 4px;
         height: 32px;
         border-radius: 2px;
-        background: var(--primary-color);
+        background: var(--primary-color, #03a9f4);
         flex-shrink: 0;
       }
 
       .agenda-chore-indicator.overdue {
-        background: var(--error-color);
+        background: var(--error-color, #db4437);
       }
 
       .agenda-chore-indicator.projected {
-        background: var(--primary-color);
+        background: var(--primary-color, #03a9f4);
         opacity: 0.5;
       }
 
@@ -4440,19 +4449,22 @@ class SimpleChoresCard extends LitElement {
       }
 
       .agenda-chore-content {
-        flex: 1;
+        flex: 1 1 auto;
         min-width: 0;
         display: flex;
         flex-direction: column;
         gap: 2px;
+        overflow: hidden;
       }
 
       .agenda-chore-name {
+        display: block;
         font-size: 0.95rem;
         font-weight: 500;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+        color: var(--primary-text-color, #212121);
       }
 
       .agenda-chore.completed .agenda-chore-name {
@@ -4461,20 +4473,22 @@ class SimpleChoresCard extends LitElement {
       }
 
       .agenda-chore-room {
+        display: block;
         font-size: 0.8rem;
-        color: var(--secondary-text-color);
+        color: var(--secondary-text-color, #888);
       }
 
       .agenda-chore-by {
+        display: block;
         font-size: 0.75rem;
-        color: var(--secondary-text-color);
+        color: var(--secondary-text-color, #888);
         font-style: italic;
       }
 
       .agenda-chore-projected-badge {
         display: inline-block;
-        background: var(--primary-color);
-        color: var(--text-primary-color);
+        background: var(--primary-color, #03a9f4);
+        color: var(--text-primary-color, #fff);
         padding: 1px 6px;
         border-radius: 8px;
         font-size: 0.65rem;
@@ -4483,9 +4497,9 @@ class SimpleChoresCard extends LitElement {
 
       .agenda-chore-edit,
       .agenda-chore-complete {
-        background: var(--primary-color);
+        background: var(--primary-color, #03a9f4);
         border: none;
-        color: var(--text-primary-color);
+        color: var(--text-primary-color, #fff);
         width: 32px;
         height: 32px;
         border-radius: 50%;
@@ -4498,8 +4512,8 @@ class SimpleChoresCard extends LitElement {
       }
 
       .agenda-chore-edit {
-        background: var(--secondary-background-color);
-        color: var(--primary-text-color);
+        background: var(--secondary-background-color, #fafafa);
+        color: var(--primary-text-color, #212121);
         margin-right: 8px;
       }
 
@@ -4522,7 +4536,7 @@ class SimpleChoresCard extends LitElement {
 
       .agenda-no-chores {
         padding: 12px;
-        color: var(--secondary-text-color);
+        color: var(--secondary-text-color, #888);
         font-style: italic;
         font-size: 0.85rem;
       }
