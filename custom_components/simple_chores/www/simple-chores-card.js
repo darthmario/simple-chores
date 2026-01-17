@@ -5,7 +5,7 @@
 
 // Card version - update this when releasing new versions
 // This should match the version in manifest.json
-const CARD_VERSION = "1.5.4";
+const CARD_VERSION = "1.5.5";
 
 // Try the most direct approach used by working HA cards
 let LitElement, html, css;
@@ -1460,17 +1460,27 @@ class SimpleChoresCard extends LitElement {
       });
     }
 
+    // Filter to only show days with content
+    const daysWithContent = allDays.filter(d => d.hasContent);
+
+    if (daysWithContent.length === 0) {
+      return html`
+        <div class="agenda-view">
+          <div class="agenda-empty">No chores scheduled this month</div>
+        </div>
+      `;
+    }
+
     return html`
       <div class="agenda-view">
-        ${allDays.map(dayData => html`
-          <div class="agenda-day ${dayData.isToday ? 'today' : ''} ${dayData.isPast ? 'past' : ''} ${!dayData.hasContent ? 'empty' : ''}">
+        ${daysWithContent.map(dayData => html`
+          <div class="agenda-day ${dayData.isToday ? 'today' : ''} ${dayData.isPast ? 'past' : ''}">
             <div class="agenda-day-header">
               <span class="agenda-day-name">${dayData.dayOfWeek}</span>
               <span class="agenda-day-date">${dayData.day}</span>
               ${dayData.isToday ? html`<span class="agenda-today-badge">Today</span>` : ''}
             </div>
-            ${dayData.hasContent ? html`
-              <div class="agenda-chores">
+            <div class="agenda-chores">
                 ${dayData.chores.map(chore => {
                   const isProjected = chore.isProjected || false;
                   const isOverdue = dayData.isPast && !isProjected;
@@ -1511,8 +1521,7 @@ class SimpleChoresCard extends LitElement {
                     </div>
                   `;
                 })}
-              </div>
-            ` : ''}
+            </div>
           </div>
         `)}
       </div>
@@ -4320,8 +4329,6 @@ class SimpleChoresCard extends LitElement {
         display: flex;
         flex-direction: column;
         gap: 8px;
-        max-height: 500px;
-        overflow-y: auto;
         padding: 8px 0;
       }
 
@@ -4351,15 +4358,6 @@ class SimpleChoresCard extends LitElement {
         opacity: 0.7;
       }
 
-      .agenda-day.empty {
-        opacity: 0.6;
-      }
-
-      .agenda-day.empty .agenda-day-header {
-        border-bottom: none;
-        padding: 8px 12px;
-      }
-
       .agenda-day-header {
         display: flex;
         align-items: center;
@@ -4367,6 +4365,8 @@ class SimpleChoresCard extends LitElement {
         padding: 10px 12px;
         background: var(--secondary-background-color, #fafafa);
         border-bottom: 1px solid var(--divider-color, #e0e0e0);
+        min-height: 40px;
+        box-sizing: border-box;
       }
 
       .agenda-day-name {
@@ -4395,6 +4395,7 @@ class SimpleChoresCard extends LitElement {
         flex-direction: column;
         width: 100%;
         box-sizing: border-box;
+        background: var(--card-background-color, #fff);
       }
 
       .agenda-chore {
@@ -4408,6 +4409,8 @@ class SimpleChoresCard extends LitElement {
         color: var(--primary-text-color, #212121);
         box-sizing: border-box;
         width: 100%;
+        min-height: 48px;
+        background: var(--card-background-color, #fff);
       }
 
       .agenda-chore:last-child {
