@@ -478,8 +478,18 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         chore = self.store.chores[chore_id]
         today = date.today()
-        # Use the new anchored-aware calculation
-        next_due = calculate_next_due_for_chore(chore, today)
+
+        # For anchored recurrence, calculate from the current due date to maintain pattern
+        # For interval-based, calculate from today (completion date)
+        recurrence_type = chore.get("recurrence_type", "interval")
+        if recurrence_type == "anchored" and chore.get("next_due"):
+            current_due = date.fromisoformat(chore["next_due"])
+            # Use whichever is later to ensure we get the NEXT occurrence
+            calc_from = max(today, current_due)
+        else:
+            calc_from = today
+
+        next_due = calculate_next_due_for_chore(chore, calc_from)
 
         # Get user info
         if user_id is None:

@@ -42,9 +42,11 @@ from .const import (
     WEEK_ORDINALS,
     CONF_NOTIFICATION_TIME,
     CONF_NOTIFICATIONS_ENABLED,
+    CONF_NOTIFY_DAYS_BEFORE,
     CONF_NOTIFY_TARGETS,
     DEFAULT_NOTIFICATION_TIME,
     DEFAULT_NOTIFICATIONS_ENABLED,
+    DEFAULT_NOTIFY_DAYS_BEFORE,
     DOMAIN,
     FREQUENCIES,
     SERVICE_ADD_CHORE,
@@ -515,29 +517,38 @@ async def _async_check_and_notify(
     await _async_send_due_notification(hass, coordinator, entry)
 
 
+def _get_due_date_label(days_ahead: int) -> str:
+    """Get a human-readable label for the due date."""
+    if days_ahead == 0:
+        return "today"
+    elif days_ahead == 1:
+        return "tomorrow"
+    elif days_ahead == 7:
+        return "in 1 week"
+    else:
+        return f"in {days_ahead} days"
+
+
 async def _async_send_due_notification(
     hass: HomeAssistant,
     coordinator: SimpleChoresCoordinator,
     entry: ConfigEntry | None = None,
 ) -> None:
-    """Send targeted notifications about chores due today."""
+    """Send targeted notifications about chores due based on configured days."""
     # Refresh data first
     await coordinator.async_request_refresh()
 
     if coordinator.data is None:
         return
 
-    due_today = coordinator.data.get("due_today", [])
-    if not due_today:
-        return
+    # Get configured days to notify (default: only day-of)
+    days_before_list = DEFAULT_NOTIFY_DAYS_BEFORE
+    if entry:
+        days_before_list = entry.options.get(CONF_NOTIFY_DAYS_BEFORE, DEFAULT_NOTIFY_DAYS_BEFORE)
 
-    # Group chores by assigned user
-    chores_by_user: dict[str | None, list[dict[str, Any]]] = {}
-    for chore in due_today:
-        assigned_to = chore.get("assigned_to")
-        if assigned_to not in chores_by_user:
-            chores_by_user[assigned_to] = []
-        chores_by_user[assigned_to].append(chore)
+    # Get all chores and filter for each notification day
+    all_chores = coordinator.data.get("all_chores", [])
+    today = date.today()
 
     # Get all mobile app notify services
     all_mobile_apps = []
@@ -550,33 +561,57 @@ async def _async_send_due_notification(
     if entry:
         configured_targets = entry.options.get(CONF_NOTIFY_TARGETS, [])
 
-    # Send targeted notifications for assigned chores
-    for user_id, user_chores in chores_by_user.items():
-        if user_id is None:
-            # Unassigned chores - broadcast to all targets
-            targets = configured_targets if configured_targets else all_mobile_apps
-            await _async_send_notification_to_targets(
-                hass, targets, user_chores, "Unassigned Chores Due Today"
-            )
-        else:
-            # Assigned chores - send to specific user
-            user_name = await coordinator.async_get_user_name(user_id)
-            user_targets = await _async_find_user_notify_services(hass, user_id, user_name)
+    # Process notifications for each configured day
+    for days_ahead in days_before_list:
+        target_date = today + timedelta(days=days_ahead)
+        target_date_str = target_date.isoformat()
 
-            if user_targets:
-                await _async_send_notification_to_targets(
-                    hass, user_targets, user_chores, f"{user_name}'s Chores Due Today"
-                )
-            else:
-                _LOGGER.debug(
-                    "No notification service found for user %s (%s), falling back to broadcast",
-                    user_name, user_id
-                )
-                # Fallback to broadcast if user's device not found
+        # Find chores due on this target date
+        chores_due = [
+            chore for chore in all_chores
+            if chore.get("next_due") == target_date_str
+        ]
+
+        if not chores_due:
+            continue
+
+        due_label = _get_due_date_label(days_ahead)
+
+        # Group chores by assigned user
+        chores_by_user: dict[str | None, list[dict[str, Any]]] = {}
+        for chore in chores_due:
+            assigned_to = chore.get("assigned_to")
+            if assigned_to not in chores_by_user:
+                chores_by_user[assigned_to] = []
+            chores_by_user[assigned_to].append(chore)
+
+        # Send targeted notifications for assigned chores
+        for user_id, user_chores in chores_by_user.items():
+            if user_id is None:
+                # Unassigned chores - broadcast to all targets
                 targets = configured_targets if configured_targets else all_mobile_apps
                 await _async_send_notification_to_targets(
-                    hass, targets, user_chores, f"{user_name}'s Chores Due Today"
+                    hass, targets, user_chores, f"Unassigned Chores Due {due_label.title()}", due_label
                 )
+            else:
+                # Assigned chores - send to specific user
+                user_name = await coordinator.async_get_user_name(user_id)
+                user_targets = await _async_find_user_notify_services(hass, user_id, user_name)
+
+                if user_targets:
+                    await _async_send_notification_to_targets(
+                        hass, user_targets, user_chores, f"{user_name}'s Chores Due {due_label.title()}", due_label
+                    )
+                else:
+                    _LOGGER.debug(
+                        "No notification service found for user %s (%s), falling back to broadcast",
+                        user_name, user_id
+                    )
+                    # Fallback to broadcast if user's device not found
+                    targets = configured_targets if configured_targets else all_mobile_apps
+                    await _async_send_notification_to_targets(
+                        hass, targets, user_chores, f"{user_name}'s Chores Due {due_label.title()}", due_label
+                    )
 
 
 async def _async_find_user_notify_services(
@@ -610,6 +645,7 @@ async def _async_send_notification_to_targets(
     targets: list[str],
     chores: list[dict[str, Any]],
     title: str,
+    due_label: str = "today",
 ) -> None:
     """Send notification to specified targets."""
     if not targets or not chores:
@@ -617,7 +653,7 @@ async def _async_send_notification_to_targets(
 
     # Build notification message
     chore_list = "\n".join([f"• {c['name']} ({c.get('room_name', 'Unknown')})" for c in chores])
-    message = f"You have {len(chores)} chore(s) due today:\n{chore_list}"
+    message = f"You have {len(chores)} chore(s) due {due_label}:\n{chore_list}"
 
     # Send notifications
     for target in targets:
@@ -629,7 +665,7 @@ async def _async_send_notification_to_targets(
                     "title": title,
                     "message": message,
                     "data": {
-                        "tag": "simple_chores_due",
+                        "tag": f"simple_chores_due_{due_label.replace(' ', '_')}",
                         "actions": [
                             {
                                 "action": "OPEN_APP",

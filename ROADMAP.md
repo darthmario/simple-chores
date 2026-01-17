@@ -120,6 +120,16 @@ Medium - Current interval system works for most use cases, but day-anchored is e
 
 ---
 
+## Completed Features
+
+### Advanced Recurrence System
+Implemented day-anchored recurrence for chores that happen on specific days (e.g., garbage day every Tuesday, rent on the 1st). Supports weekly day selection and monthly patterns (day of month or nth weekday).
+
+### Advance Notifications
+Configurable notifications before due date - can now notify 1 day, 2 days, 3 days, or 1 week before a chore is due. Multiple notification times can be selected (e.g., notify both 1 day before AND on the day of).
+
+---
+
 ## Other Future Ideas
 
 ### Chore Templates
@@ -128,12 +138,9 @@ Pre-built chore sets for common scenarios (weekly cleaning routine, seasonal tas
 ### Statistics Dashboard
 Completion rates, user leaderboards, streak tracking
 
-### Recurring Notifications
-Reminders before due date, not just day-of
-
 ### Multi-instance Support
 Different chore lists for different properties/households
 
 ---
 
-*Last updated: 2025-01-12*
+*Last updated: 2026-01-17*

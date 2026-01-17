@@ -20,9 +20,13 @@
         "title": "Simple Chores Options",
         "description": "Configure notification settings for your simple chores.",
         "data": {
-          "notifications_enabled": "Enable daily notifications",
+          "notifications_enabled": "Enable notifications",
           "notification_time": "Notification time",
+          "notify_days_before": "When to notify",
           "notify_targets": "Notification targets"
+        },
+        "data_description": {
+          "notify_days_before": "Select when to receive notifications relative to due date. You can select multiple options."
         }
       }
     }

@@ -2,7 +2,7 @@
  * Simple Chores Card
  * A custom Lovelace card for managing simple chores
  */
-
+Great
 // Card version - update this when releasing new versions
 // This should match the version in manifest.json
 const CARD_VERSION = "1.5.1";
@@ -959,7 +959,7 @@ class SimpleChoresCard extends LitElement {
    * @returns {Date|null} - The next occurrence date, or null for one-off chores
    */
   _calculateNextOccurrence(fromDate, frequency) {
-    const date = new Date(fromDate);
+    const date = this._parseLocalDate(fromDate);
 
     switch (frequency) {
       case 'daily':
@@ -1037,6 +1037,20 @@ class SimpleChoresCard extends LitElement {
    * @param {Date} fromDate - Calculate next occurrence after this date
    * @returns {Date|null}
    */
+  /**
+   * Parse a date string to a local Date object (avoiding UTC interpretation)
+   * @param {Date|string} dateInput - Date object or YYYY-MM-DD string
+   * @returns {Date}
+   */
+  _parseLocalDate(dateInput) {
+    if (dateInput instanceof Date) {
+      return new Date(dateInput.getFullYear(), dateInput.getMonth(), dateInput.getDate());
+    }
+    // Parse YYYY-MM-DD as local date, not UTC
+    const parts = String(dateInput).split('-');
+    return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+  }
+
   _calculateNextOccurrenceForChore(chore, fromDate) {
     const recurrenceType = chore.recurrence_type || 'interval';
     const frequency = chore.frequency;
@@ -1050,8 +1064,8 @@ class SimpleChoresCard extends LitElement {
       return this._calculateNextOccurrence(fromDate, frequency);
     }
 
-    // Anchored recurrence
-    const date = new Date(fromDate);
+    // Anchored recurrence - parse as local date to avoid timezone issues
+    const date = this._parseLocalDate(fromDate);
     const isWeekly = ['weekly', 'biweekly'].includes(frequency);
     const isMonthlyPlus = ['monthly', 'bimonthly', 'quarterly', 'biannual', 'yearly'].includes(frequency);
 
@@ -1061,15 +1075,14 @@ class SimpleChoresCard extends LitElement {
       const weeksInterval = frequency === 'biweekly' ? 2 : 1;
 
       // Start searching from next day
-      const searchDate = new Date(date);
-      searchDate.setDate(searchDate.getDate() + 1);
+      const searchDate = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1);
 
       // Search up to 8 weeks ahead
       for (let i = 0; i < 56; i++) {
         const dayOfWeek = searchDate.getDay();
         if (anchorDays.includes(dayOfWeek)) {
           // Check if this is within the correct week interval
-          const daysDiff = Math.floor((searchDate - date) / (1000 * 60 * 60 * 24));
+          const daysDiff = Math.round((searchDate - date) / (1000 * 60 * 60 * 24));
           const weeksDiff = Math.floor(daysDiff / 7);
           if (weeksDiff % weeksInterval === 0 || daysDiff < 7) {
             return searchDate;
@@ -1154,7 +1167,7 @@ class SimpleChoresCard extends LitElement {
       return occurrences;
     }
 
-    const startDate = new Date(chore.next_due || chore.due_date);
+    const startDate = this._parseLocalDate(chore.next_due || chore.due_date);
     let currentDate = this._calculateNextOccurrenceForChore(chore, startDate);
 
     // Generate up to 12 future occurrences or until endDate
@@ -1384,6 +1397,15 @@ class SimpleChoresCard extends LitElement {
                     >
                       <span class="calendar-chore-name">${chore.name}</span>
                       ${roomName ? html`<span class="calendar-chore-room">${roomName}</span>` : ''}
+                      ${!isProjected ? html`
+                        <button
+                          class="calendar-chore-edit"
+                          @click=${(e) => { e.stopPropagation(); this._editChore(chore); }}
+                          title="Edit chore"
+                        >
+                          <ha-icon icon="mdi:pencil"></ha-icon>
+                        </button>
+                      ` : ''}
                     </div>
                   `;
                 })}
@@ -1465,6 +1487,9 @@ class SimpleChoresCard extends LitElement {
                         ${isProjected ? html`<span class="agenda-chore-projected-badge">Projected</span>` : ''}
                       </div>
                       ${!isProjected ? html`
+                        <button class="agenda-chore-edit" @click=${(e) => { e.stopPropagation(); this._editChore(chore); }} title="Edit">
+                          <ha-icon icon="mdi:pencil"></ha-icon>
+                        </button>
                         <button class="agenda-chore-complete" @click=${(e) => { e.stopPropagation(); this._openCompleteChoreModal(chore); }} title="Complete">
                           <ha-icon icon="mdi:check"></ha-icon>
                         </button>
@@ -4114,6 +4139,7 @@ class SimpleChoresCard extends LitElement {
       }
 
       .calendar-chore {
+        position: relative;
         background: var(--primary-color);
         color: white;
         padding: 4px 6px;
@@ -4178,6 +4204,40 @@ class SimpleChoresCard extends LitElement {
         text-overflow: ellipsis;
         white-space: nowrap;
         margin-top: 1px;
+      }
+
+      .calendar-chore-edit {
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        width: 18px;
+        height: 18px;
+        padding: 0;
+        border: none;
+        border-radius: 50%;
+        background: var(--secondary-background-color);
+        color: var(--primary-text-color);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        transition: opacity 0.2s, transform 0.2s;
+        z-index: 1;
+      }
+
+      .calendar-chore:hover .calendar-chore-edit {
+        opacity: 1;
+      }
+
+      .calendar-chore-edit:hover {
+        transform: scale(1.15);
+        background: var(--primary-color);
+        color: var(--text-primary-color);
+      }
+
+      .calendar-chore-edit ha-icon {
+        --mdc-icon-size: 12px;
       }
 
       .calendar-chore-content {
@@ -4421,6 +4481,7 @@ class SimpleChoresCard extends LitElement {
         opacity: 0.7;
       }
 
+      .agenda-chore-edit,
       .agenda-chore-complete {
         background: var(--primary-color);
         border: none;
@@ -4436,11 +4497,19 @@ class SimpleChoresCard extends LitElement {
         flex-shrink: 0;
       }
 
+      .agenda-chore-edit {
+        background: var(--secondary-background-color);
+        color: var(--primary-text-color);
+        margin-right: 8px;
+      }
+
+      .agenda-chore-edit:hover,
       .agenda-chore-complete:hover {
         transform: scale(1.1);
         box-shadow: 0 2px 8px rgba(0,0,0,0.2);
       }
 
+      .agenda-chore-edit ha-icon,
       .agenda-chore-complete ha-icon {
         --mdc-icon-size: 18px;
       }

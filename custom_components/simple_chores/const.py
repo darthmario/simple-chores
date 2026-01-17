@@ -130,10 +130,15 @@ ATTR_INTERVAL: Final = "interval"
 CONF_NOTIFICATIONS_ENABLED: Final = "notifications_enabled"
 CONF_NOTIFICATION_TIME: Final = "notification_time"
 CONF_NOTIFY_TARGETS: Final = "notify_targets"
+CONF_NOTIFY_DAYS_BEFORE: Final = "notify_days_before"
 
 # Defaults
 DEFAULT_NOTIFICATION_TIME: Final = "08:00"
 DEFAULT_NOTIFICATIONS_ENABLED: Final = True
+DEFAULT_NOTIFY_DAYS_BEFORE: Final = [0]  # Default: only notify on due date
+
+# Notification timing options (days before due date)
+NOTIFY_DAYS_OPTIONS: Final = [0, 1, 2, 3, 7]  # Today, 1 day, 2 days, 3 days, 1 week
 
 # Limits
 MAX_ROOM_NAME_LENGTH: Final = 50

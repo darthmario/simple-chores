@@ -14,9 +14,11 @@ from homeassistant.helpers import selector
 from .const import (
     CONF_NOTIFICATION_TIME,
     CONF_NOTIFICATIONS_ENABLED,
+    CONF_NOTIFY_DAYS_BEFORE,
     CONF_NOTIFY_TARGETS,
     DEFAULT_NOTIFICATION_TIME,
     DEFAULT_NOTIFICATIONS_ENABLED,
+    DEFAULT_NOTIFY_DAYS_BEFORE,
     DOMAIN,
 )
 
@@ -86,6 +88,11 @@ class HouseholdTasksOptionsFlow(OptionsFlow):
     ) -> FlowResult:
         """Manage the options."""
         if user_input is not None:
+            # Convert days_before from string list to int list
+            if CONF_NOTIFY_DAYS_BEFORE in user_input:
+                user_input[CONF_NOTIFY_DAYS_BEFORE] = [
+                    int(d) for d in user_input[CONF_NOTIFY_DAYS_BEFORE]
+                ]
             return self.async_create_entry(title="", data=user_input)
 
         # Get list of notify services for target selection
@@ -95,6 +102,21 @@ class HouseholdTasksOptionsFlow(OptionsFlow):
                 notify_services.append(
                     selector.SelectOptionDict(value=service, label=service)
                 )
+
+        # Options for days before notification
+        days_before_options = [
+            selector.SelectOptionDict(value="0", label="Day of (due today)"),
+            selector.SelectOptionDict(value="1", label="1 day before"),
+            selector.SelectOptionDict(value="2", label="2 days before"),
+            selector.SelectOptionDict(value="3", label="3 days before"),
+            selector.SelectOptionDict(value="7", label="1 week before"),
+        ]
+
+        # Convert stored int list to string list for the selector
+        current_days = self._config_entry.options.get(
+            CONF_NOTIFY_DAYS_BEFORE, DEFAULT_NOTIFY_DAYS_BEFORE
+        )
+        current_days_str = [str(d) for d in current_days]
 
         return self.async_show_form(
             step_id="init",
@@ -112,6 +134,16 @@ class HouseholdTasksOptionsFlow(OptionsFlow):
                             CONF_NOTIFICATION_TIME, DEFAULT_NOTIFICATION_TIME
                         ),
                     ): selector.TimeSelector(),
+                    vol.Optional(
+                        CONF_NOTIFY_DAYS_BEFORE,
+                        default=current_days_str,
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=days_before_options,
+                            multiple=True,
+                            mode=selector.SelectSelectorMode.LIST,
+                        )
+                    ),
                     vol.Optional(
                         CONF_NOTIFY_TARGETS,
                         default=self._config_entry.options.get(CONF_NOTIFY_TARGETS, []),
