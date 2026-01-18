@@ -5,7 +5,7 @@
 
 // Card version - update this when releasing new versions
 // This should match the version in manifest.json
-const CARD_VERSION = "1.5.5";
+const CARD_VERSION = "1.6.0";
 
 // Try the most direct approach used by working HA cards
 let LitElement, html, css;
@@ -97,6 +97,10 @@ class SimpleChoresCard extends LitElement {
       _cardWidth: { type: Number },
       // Track if user manually overrode calendar mode
       _userOverrodeCalendarMode: { type: Boolean },
+      // Statistics dashboard
+      _showExpandedStats: { type: Boolean },
+      _statsTimePeriod: { type: String },
+      _statsCache: { type: Object },
     };
   }
 
@@ -162,6 +166,10 @@ class SimpleChoresCard extends LitElement {
     this._cardWidth = 0;
     this._resizeObserver = null;
     this._userOverrodeCalendarMode = false;
+    // Statistics dashboard
+    this._showExpandedStats = false;
+    this._statsTimePeriod = '4w';  // Default to 4 weeks
+    this._statsCache = { data: null, lastUpdate: 0, ttl: 60000 };  // 1 minute cache
     // Performance caching
     this._cache = {
       rooms: { data: null, lastUpdate: 0, ttl: this.constructor.constants.ROOM_CACHE_TTL },
@@ -772,19 +780,193 @@ class SimpleChoresCard extends LitElement {
     const total = this.hass.states[SimpleChoresCard.SENSORS.TOTAL]?.state || "0";
 
     return html`
-      <div class="stats">
-        <div class="stat ${parseInt(dueToday) > 0 ? 'attention' : ''}">
-          <span class="stat-value">${dueToday}</span>
-          <span class="stat-label">Due Today</span>
+      <div class="stats-container">
+        <div class="stats">
+          <div class="stat ${parseInt(dueToday) > 0 ? 'attention' : ''}">
+            <span class="stat-value">${dueToday}</span>
+            <span class="stat-label">Due Today</span>
+          </div>
+          <div class="stat ${parseInt(overdue) > 0 ? 'warning' : ''}">
+            <span class="stat-value">${overdue}</span>
+            <span class="stat-label">Overdue</span>
+          </div>
+          <div class="stat clickable" @click=${this._openAllChoresModal} title="View and manage all active chores">
+            <span class="stat-value">${total}</span>
+            <span class="stat-label">Active Chores</span>
+          </div>
+          <button
+            class="stats-expand-btn ${this._showExpandedStats ? 'expanded' : ''}"
+            @click=${this._toggleExpandedStats}
+            title="${this._showExpandedStats ? 'Hide detailed stats' : 'Show detailed stats'}"
+          >
+            <ha-icon icon="mdi:chevron-down"></ha-icon>
+          </button>
         </div>
-        <div class="stat ${parseInt(overdue) > 0 ? 'warning' : ''}">
-          <span class="stat-value">${overdue}</span>
-          <span class="stat-label">Overdue</span>
+        ${this._showExpandedStats ? this._renderExpandedStats() : ''}
+      </div>
+    `;
+  }
+
+  _renderExpandedStats() {
+    const history = this._getCompletionHistorySync();
+
+    // Handle empty state
+    if (history.length === 0) {
+      return this._renderEmptyStats();
+    }
+
+    const stats = this._calculateStatsData();
+
+    return html`
+      <div class="stats-dashboard">
+        ${this._renderTimePeriodToggle()}
+        ${this._renderCompletionsChart(stats.completionsOverTime)}
+        <div class="stats-insights-grid">
+          ${this._renderTopChoresInsight(stats.topChores)}
+          ${stats.roomStats.length > 0 ? this._renderRoomStatsInsight(stats.roomStats) : ''}
         </div>
-        <div class="stat clickable" @click=${this._openAllChoresModal} title="View and manage all active chores">
-          <span class="stat-value">${total}</span>
-          <span class="stat-label">Active Chores</span>
+        ${stats.userStats.length > 1 ? this._renderUserLeaderboard(stats.userStats) : ''}
+      </div>
+    `;
+  }
+
+  _renderEmptyStats() {
+    return html`
+      <div class="stats-dashboard">
+        <div class="stats-empty">
+          <ha-icon icon="mdi:chart-line"></ha-icon>
+          <p>No completion history yet.</p>
+          <p>Complete some chores to see your statistics!</p>
         </div>
+      </div>
+    `;
+  }
+
+  _renderTimePeriodToggle() {
+    const periods = [
+      { value: '7d', label: '7 Days' },
+      { value: '4w', label: '4 Weeks' },
+      { value: '3m', label: '3 Months' },
+      { value: '1y', label: '1 Year' }
+    ];
+
+    return html`
+      <div class="stats-period-toggle">
+        ${periods.map(p => html`
+          <button
+            class="stats-period-btn ${this._statsTimePeriod === p.value ? 'active' : ''}"
+            @click=${() => this._setStatsPeriod(p.value)}
+          >
+            ${p.label}
+          </button>
+        `)}
+      </div>
+    `;
+  }
+
+  _renderCompletionsChart(data) {
+    const maxCount = Math.max(...data.map(d => d.count), 1);
+    const totalInPeriod = data.reduce((sum, d) => sum + d.count, 0);
+
+    return html`
+      <div class="stats-section">
+        <div class="stats-section-title">
+          <ha-icon icon="mdi:chart-bar"></ha-icon>
+          <span>Completions Over Time</span>
+          <span class="stats-section-total">${totalInPeriod} total</span>
+        </div>
+        <div class="stats-chart">
+          ${data.map(d => {
+            const heightPercent = (d.count / maxCount) * 100;
+            return html`
+              <div class="stats-chart-bar-container">
+                <span class="stats-chart-bar-value">${d.count > 0 ? d.count : ''}</span>
+                <div
+                  class="stats-chart-bar ${d.count === 0 ? 'empty' : ''}"
+                  style="height: ${Math.max(heightPercent, 4)}%"
+                ></div>
+                <span class="stats-chart-bar-label">${d.label}</span>
+              </div>
+            `;
+          })}
+        </div>
+      </div>
+    `;
+  }
+
+  _renderTopChoresInsight(topChores) {
+    if (topChores.mostCompleted.length === 0) {
+      return html`
+        <div class="stats-insight-card">
+          <h4>Top Chores</h4>
+          <p class="stats-no-data">No data yet</p>
+        </div>
+      `;
+    }
+
+    return html`
+      <div class="stats-insight-card">
+        <h4>Most Completed</h4>
+        <ul class="stats-chore-list">
+          ${topChores.mostCompleted.map(chore => html`
+            <li class="stats-chore-item">
+              <span class="stats-chore-name">${chore.name}</span>
+              <span class="stats-chore-count">${chore.count}</span>
+            </li>
+          `)}
+        </ul>
+      </div>
+    `;
+  }
+
+  _renderRoomStatsInsight(roomStats) {
+    const maxCompletions = Math.max(...roomStats.map(r => r.completions), 1);
+
+    return html`
+      <div class="stats-insight-card">
+        <h4>Activity by Room</h4>
+        ${roomStats.slice(0, 5).map(room => html`
+          <div class="stats-horizontal-bar">
+            <span class="stats-horizontal-bar-label" title="${room.name}">
+              ${room.name}
+            </span>
+            <div class="stats-horizontal-bar-track">
+              <div
+                class="stats-horizontal-bar-fill"
+                style="width: ${(room.completions / maxCompletions) * 100}%"
+              ></div>
+            </div>
+            <span class="stats-horizontal-bar-value">${room.completions}</span>
+          </div>
+        `)}
+      </div>
+    `;
+  }
+
+  _renderUserLeaderboard(userStats) {
+    const maxCount = Math.max(...userStats.map(u => u.count), 1);
+
+    return html`
+      <div class="stats-section">
+        <div class="stats-section-title">
+          <ha-icon icon="mdi:account-group"></ha-icon>
+          <span>User Leaderboard</span>
+        </div>
+        ${userStats.map((user, index) => html`
+          <div class="stats-horizontal-bar ${index === 0 ? 'leader' : ''}">
+            <span class="stats-horizontal-bar-label" title="${user.name}">
+              ${index === 0 ? html`<ha-icon icon="mdi:trophy" class="leader-icon"></ha-icon>` : ''}
+              ${user.name}
+            </span>
+            <div class="stats-horizontal-bar-track">
+              <div
+                class="stats-horizontal-bar-fill"
+                style="width: ${(user.count / maxCount) * 100}%"
+              ></div>
+            </div>
+            <span class="stats-horizontal-bar-value">${user.count}</span>
+          </div>
+        `)}
       </div>
     `;
   }
@@ -3545,6 +3727,195 @@ class SimpleChoresCard extends LitElement {
     }
   }
 
+  // ============================================
+  // STATISTICS DASHBOARD METHODS
+  // ============================================
+
+  _isStatsCacheValid() {
+    return this._statsCache.data !== null &&
+           (Date.now() - this._statsCache.lastUpdate) < this._statsCache.ttl;
+  }
+
+  _calculateStatsData() {
+    // Check cache first
+    if (this._isStatsCacheValid()) {
+      return this._statsCache.data;
+    }
+
+    const history = this._getCompletionHistorySync();
+    const chores = this._getAllChores();
+    const rooms = this._getRooms();
+
+    const stats = {
+      completionsOverTime: this._calculateCompletionsOverTime(history),
+      topChores: this._calculateTopChores(history),
+      roomStats: this._calculateRoomStats(history, chores, rooms),
+      userStats: this._calculateUserStats(history),
+      totalCompletions: history.length
+    };
+
+    // Update cache
+    this._statsCache.data = stats;
+    this._statsCache.lastUpdate = Date.now();
+
+    return stats;
+  }
+
+  _calculateCompletionsOverTime(history) {
+    const periods = {
+      '7d': { days: 7, groupBy: 'day', labels: 7 },
+      '4w': { days: 28, groupBy: 'week', labels: 4 },
+      '3m': { days: 90, groupBy: 'month', labels: 3 },
+      '1y': { days: 365, groupBy: 'month', labels: 12 }
+    };
+
+    const config = periods[this._statsTimePeriod] || periods['4w'];
+    const now = new Date();
+    const cutoffDate = new Date(now);
+    cutoffDate.setDate(cutoffDate.getDate() - config.days);
+
+    // Filter history to time period
+    const relevantHistory = history.filter(h =>
+      new Date(h.completed_at) >= cutoffDate
+    );
+
+    return this._groupByPeriod(relevantHistory, config.groupBy, config.labels);
+  }
+
+  _groupByPeriod(history, groupBy, numLabels) {
+    const groups = new Map();
+    const now = new Date();
+
+    // Initialize all periods with 0
+    for (let i = numLabels - 1; i >= 0; i--) {
+      const date = new Date(now);
+      let label, key;
+
+      if (groupBy === 'day') {
+        date.setDate(date.getDate() - i);
+        label = date.toLocaleDateString('en-US', { weekday: 'short' });
+        key = date.toISOString().split('T')[0];
+      } else if (groupBy === 'week') {
+        date.setDate(date.getDate() - (i * 7));
+        label = `W${numLabels - i}`;
+        key = this._getWeekKey(date);
+      } else { // month
+        date.setMonth(date.getMonth() - i);
+        label = date.toLocaleDateString('en-US', { month: 'short' });
+        key = `${date.getFullYear()}-${date.getMonth()}`;
+      }
+
+      groups.set(key, { label, count: 0, date: new Date(date) });
+    }
+
+    // Count completions
+    history.forEach(entry => {
+      const date = new Date(entry.completed_at);
+      let key;
+
+      if (groupBy === 'day') {
+        key = date.toISOString().split('T')[0];
+      } else if (groupBy === 'week') {
+        key = this._getWeekKey(date);
+      } else {
+        key = `${date.getFullYear()}-${date.getMonth()}`;
+      }
+
+      if (groups.has(key)) {
+        groups.get(key).count++;
+      }
+    });
+
+    return Array.from(groups.values());
+  }
+
+  _getWeekKey(date) {
+    // Get ISO week number
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+    const yearStart = new Date(d.getFullYear(), 0, 1);
+    const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+    return `${d.getFullYear()}-W${weekNo}`;
+  }
+
+  _calculateTopChores(history) {
+    const choreCounts = new Map();
+
+    history.forEach(entry => {
+      const name = entry.chore_name;
+      choreCounts.set(name, (choreCounts.get(name) || 0) + 1);
+    });
+
+    const sorted = Array.from(choreCounts.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+
+    return {
+      mostCompleted: sorted.slice(0, 5),
+      leastCompleted: sorted.length > 5 ? sorted.slice(-5).reverse() : []
+    };
+  }
+
+  _calculateRoomStats(history, chores, rooms) {
+    const roomCompletions = new Map();
+
+    // Build chore-to-room lookup
+    const choreRoomMap = new Map();
+    chores.forEach(chore => {
+      choreRoomMap.set(chore.id, chore.room_id || chore.room);
+    });
+
+    // Count completions per room
+    history.forEach(entry => {
+      const roomId = choreRoomMap.get(entry.chore_id);
+      if (roomId) {
+        roomCompletions.set(roomId, (roomCompletions.get(roomId) || 0) + 1);
+      }
+    });
+
+    // Build room stats array
+    return rooms.map(room => ({
+      id: room.id,
+      name: room.name,
+      icon: room.icon,
+      completions: roomCompletions.get(room.id) || 0
+    })).filter(r => r.completions > 0)
+      .sort((a, b) => b.completions - a.completions);
+  }
+
+  _calculateUserStats(history) {
+    const userCounts = new Map();
+
+    history.forEach(entry => {
+      const userId = entry.completed_by;
+      const userName = entry.completed_by_name || 'Unknown';
+
+      if (!userCounts.has(userId)) {
+        userCounts.set(userId, { id: userId, name: userName, count: 0 });
+      }
+      userCounts.get(userId).count++;
+    });
+
+    return Array.from(userCounts.values())
+      .sort((a, b) => b.count - a.count);
+  }
+
+  _toggleExpandedStats() {
+    this._showExpandedStats = !this._showExpandedStats;
+    // Invalidate cache when expanding to get fresh data
+    if (this._showExpandedStats) {
+      this._statsCache.data = null;
+    }
+  }
+
+  _setStatsPeriod(period) {
+    this._statsTimePeriod = period;
+    // Invalidate cache when period changes
+    this._statsCache.data = null;
+    this.requestUpdate();
+  }
+
   async _openHistoryModal() {
     // Load history data before showing modal
     try {
@@ -4561,11 +4932,15 @@ class SimpleChoresCard extends LitElement {
         padding: 16px;
       }
 
+      .stats-container {
+        margin-bottom: 20px;
+      }
+
       .stats {
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
+        grid-template-columns: repeat(3, 1fr) auto;
         gap: 12px;
-        margin-bottom: 20px;
+        align-items: center;
       }
 
       .stat {
@@ -4631,7 +5006,299 @@ class SimpleChoresCard extends LitElement {
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
         background: rgba(34, 211, 238, 0.1);
       }
-      
+
+      /* Statistics Dashboard Expand Button */
+      .stats-expand-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        border: none;
+        background: var(--secondary-background-color, #f5f5f5);
+        color: var(--secondary-text-color);
+        cursor: pointer;
+        border-radius: 50%;
+        transition: all 0.2s;
+      }
+
+      .stats-expand-btn:hover {
+        background: var(--primary-color);
+        color: var(--text-primary-color, #fff);
+      }
+
+      .stats-expand-btn ha-icon {
+        --mdc-icon-size: 20px;
+        transition: transform 0.3s ease;
+      }
+
+      .stats-expand-btn.expanded ha-icon {
+        transform: rotate(180deg);
+      }
+
+      /* Statistics Dashboard Container */
+      .stats-dashboard {
+        margin-top: 16px;
+        padding: 16px;
+        background: var(--secondary-background-color, #f5f5f5);
+        border-radius: 12px;
+      }
+
+      /* Time Period Toggle */
+      .stats-period-toggle {
+        display: flex;
+        gap: 4px;
+        margin-bottom: 16px;
+        background: var(--card-background-color, #fff);
+        padding: 4px;
+        border-radius: 8px;
+      }
+
+      .stats-period-btn {
+        flex: 1;
+        padding: 8px 12px;
+        border: none;
+        background: transparent;
+        color: var(--secondary-text-color);
+        font-size: 0.85em;
+        font-weight: 500;
+        cursor: pointer;
+        border-radius: 6px;
+        transition: all 0.2s;
+      }
+
+      .stats-period-btn.active {
+        background: var(--primary-color);
+        color: var(--text-primary-color, #fff);
+      }
+
+      .stats-period-btn:hover:not(.active) {
+        background: var(--divider-color);
+      }
+
+      /* Stats Sections */
+      .stats-section {
+        margin-bottom: 20px;
+      }
+
+      .stats-section:last-child {
+        margin-bottom: 0;
+      }
+
+      .stats-section-title {
+        font-size: 0.9em;
+        font-weight: 600;
+        color: var(--primary-text-color);
+        margin-bottom: 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .stats-section-title ha-icon {
+        --mdc-icon-size: 18px;
+        color: var(--primary-color);
+      }
+
+      .stats-section-total {
+        margin-left: auto;
+        font-weight: 400;
+        color: var(--secondary-text-color);
+        font-size: 0.9em;
+      }
+
+      /* Bar Chart */
+      .stats-chart {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        height: 120px;
+        padding: 8px 0;
+        gap: 4px;
+        background: var(--card-background-color, #fff);
+        border-radius: 8px;
+        padding: 12px;
+      }
+
+      .stats-chart-bar-container {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        height: 100%;
+        min-width: 0;
+      }
+
+      .stats-chart-bar-value {
+        font-size: 0.75em;
+        font-weight: 600;
+        color: var(--primary-text-color);
+        margin-bottom: 4px;
+        min-height: 16px;
+      }
+
+      .stats-chart-bar {
+        width: 100%;
+        max-width: 40px;
+        background: linear-gradient(to top, var(--primary-color, #03a9f4), #06b6d4);
+        border-radius: 4px 4px 0 0;
+        transition: height 0.3s ease;
+        min-height: 4px;
+      }
+
+      .stats-chart-bar.empty {
+        background: var(--divider-color);
+      }
+
+      .stats-chart-bar-label {
+        font-size: 0.7em;
+        color: var(--secondary-text-color);
+        margin-top: 4px;
+        text-align: center;
+        white-space: nowrap;
+      }
+
+      /* Insights Grid */
+      .stats-insights-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+
+      .stats-insight-card {
+        background: var(--card-background-color, #fff);
+        border-radius: 8px;
+        padding: 12px;
+      }
+
+      .stats-insight-card h4 {
+        font-size: 0.85em;
+        font-weight: 600;
+        color: var(--secondary-text-color);
+        margin: 0 0 10px 0;
+      }
+
+      .stats-no-data {
+        color: var(--secondary-text-color);
+        font-size: 0.85em;
+        font-style: italic;
+      }
+
+      /* Chore List in Stats */
+      .stats-chore-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+
+      .stats-chore-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 6px 0;
+        border-bottom: 1px solid var(--divider-color);
+      }
+
+      .stats-chore-item:last-child {
+        border-bottom: none;
+      }
+
+      .stats-chore-name {
+        font-size: 0.85em;
+        color: var(--primary-text-color);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        flex: 1;
+        margin-right: 8px;
+      }
+
+      .stats-chore-count {
+        font-size: 0.8em;
+        font-weight: 600;
+        color: var(--primary-color);
+        background: rgba(3, 169, 244, 0.1);
+        padding: 2px 8px;
+        border-radius: 12px;
+        flex-shrink: 0;
+      }
+
+      /* Horizontal Bar Charts */
+      .stats-horizontal-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+
+      .stats-horizontal-bar:last-child {
+        margin-bottom: 0;
+      }
+
+      .stats-horizontal-bar-label {
+        flex: 0 0 80px;
+        font-size: 0.8em;
+        color: var(--primary-text-color);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .stats-horizontal-bar-track {
+        flex: 1;
+        height: 8px;
+        background: var(--divider-color);
+        border-radius: 4px;
+        overflow: hidden;
+      }
+
+      .stats-horizontal-bar-fill {
+        height: 100%;
+        background: linear-gradient(to right, var(--primary-color, #03a9f4), #06b6d4);
+        border-radius: 4px;
+        transition: width 0.3s ease;
+      }
+
+      .stats-horizontal-bar-value {
+        flex: 0 0 32px;
+        text-align: right;
+        font-size: 0.8em;
+        font-weight: 600;
+        color: var(--primary-text-color);
+      }
+
+      .stats-horizontal-bar.leader .stats-horizontal-bar-fill {
+        background: linear-gradient(to right, #f59e0b, #fbbf24);
+      }
+
+      .leader-icon {
+        --mdc-icon-size: 14px;
+        color: #f59e0b;
+      }
+
+      /* Empty State */
+      .stats-empty {
+        text-align: center;
+        padding: 24px;
+        color: var(--secondary-text-color);
+      }
+
+      .stats-empty ha-icon {
+        --mdc-icon-size: 48px;
+        opacity: 0.5;
+        margin-bottom: 8px;
+        display: block;
+      }
+
+      .stats-empty p {
+        margin: 4px 0;
+        font-size: 0.9em;
+      }
+
       .section {
         margin-bottom: 24px;
       }

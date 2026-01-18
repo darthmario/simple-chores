@@ -122,6 +122,13 @@ Medium - Current interval system works for most use cases, but day-anchored is e
 
 ## Completed Features
 
+### Statistics Dashboard
+Expandable statistics dashboard showing completion analytics:
+- Time-based bar chart (7 days, 4 weeks, 3 months, 1 year views)
+- Most completed chores ranking
+- Activity by room with visual bars
+- User leaderboard with trophy for top contributor (when multiple users)
+
 ### Advanced Recurrence System
 Implemented day-anchored recurrence for chores that happen on specific days (e.g., garbage day every Tuesday, rent on the 1st). Supports weekly day selection and monthly patterns (day of month or nth weekday).
 

@@ -103,6 +103,14 @@ class SimpleChoresDueTodaySensor(SimpleChoresBaseSensor):
                     "frequency": c["frequency"],
                     "assigned_to": c.get("assigned_to"),
                     "next_due": c.get("next_due"),
+                    # Recurrence settings
+                    "recurrence_type": c.get("recurrence_type", "interval"),
+                    "anchor_days_of_week": c.get("anchor_days_of_week", []),
+                    "anchor_type": c.get("anchor_type"),
+                    "anchor_day_of_month": c.get("anchor_day_of_month"),
+                    "anchor_week": c.get("anchor_week"),
+                    "anchor_weekday": c.get("anchor_weekday"),
+                    "interval": c.get("interval", 1),
                 }
                 for c in chores
             ],
@@ -149,6 +157,14 @@ class SimpleChoresDueThisWeekSensor(SimpleChoresBaseSensor):
                     "frequency": c["frequency"],
                     "next_due": c.get("next_due"),
                     "assigned_to": c.get("assigned_to"),
+                    # Recurrence settings
+                    "recurrence_type": c.get("recurrence_type", "interval"),
+                    "anchor_days_of_week": c.get("anchor_days_of_week", []),
+                    "anchor_type": c.get("anchor_type"),
+                    "anchor_day_of_month": c.get("anchor_day_of_month"),
+                    "anchor_week": c.get("anchor_week"),
+                    "anchor_weekday": c.get("anchor_weekday"),
+                    "interval": c.get("interval", 1),
                 }
                 for c in chores
             ],
@@ -192,8 +208,18 @@ class SimpleChoresOverdueSensor(SimpleChoresBaseSensor):
                     "id": c["id"],
                     "name": c["name"],
                     "room": c.get("room_name", "Unknown"),
+                    "room_id": c.get("room_id"),
                     "frequency": c["frequency"],
                     "next_due": c["next_due"],
+                    "assigned_to": c.get("assigned_to"),
+                    # Recurrence settings
+                    "recurrence_type": c.get("recurrence_type", "interval"),
+                    "anchor_days_of_week": c.get("anchor_days_of_week", []),
+                    "anchor_type": c.get("anchor_type"),
+                    "anchor_day_of_month": c.get("anchor_day_of_month"),
+                    "anchor_week": c.get("anchor_week"),
+                    "anchor_weekday": c.get("anchor_weekday"),
+                    "interval": c.get("interval", 1),
                 }
                 for c in chores
             ],
@@ -252,6 +278,14 @@ class SimpleChoresTotalSensor(SimpleChoresBaseSensor):
                     "last_completed_by": c.get("last_completed_by"),
                     "created_at": c.get("created_at"),
                     "assigned_to": c.get("assigned_to"),
+                    # Recurrence settings
+                    "recurrence_type": c.get("recurrence_type", "interval"),
+                    "anchor_days_of_week": c.get("anchor_days_of_week", []),
+                    "anchor_type": c.get("anchor_type"),
+                    "anchor_day_of_month": c.get("anchor_day_of_month"),
+                    "anchor_week": c.get("anchor_week"),
+                    "anchor_weekday": c.get("anchor_weekday"),
+                    "interval": c.get("interval", 1),
                 }
                 for c in all_chores
             ],
