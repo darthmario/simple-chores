@@ -137,16 +137,13 @@ Configurable notifications before due date - can now notify 1 day, 2 days, 3 day
 
 ---
 
-## Other Future Ideas
+## Maybe Someday
 
-### Chore Templates
-Pre-built chore sets for common scenarios (weekly cleaning routine, seasonal tasks, etc.)
+These ideas are on the backburner and may or may not be implemented:
 
-### Statistics Dashboard
-Completion rates, user leaderboards, streak tracking
-
-### Multi-instance Support
-Different chore lists for different properties/households
+- **Chore Templates** - Pre-built chore sets for common scenarios (weekly cleaning routine, seasonal tasks, etc.)
+- **Multi-instance Support** - Different chore lists for different properties/households
+- **Streak Tracking** - Track consecutive days/weeks of completing chores
 
 ---
 

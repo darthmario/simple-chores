@@ -1,0 +1,19 @@
+# Development dependencies for Simple Chores
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+
+# Linting and formatting
+ruff>=0.1.0
+
+# Type checking
+mypy>=1.5.0
+
+# Runtime dependencies (for testing)
+python-dateutil>=2.8.0
+
+# Home Assistant testing utilities
+# Note: For full HA integration testing, you may also need:
+# pip install homeassistant

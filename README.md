@@ -2,6 +2,7 @@
 
 A comprehensive Home Assistant custom integration for tracking household chores with advanced room organization, flexible scheduling, user assignment & attribution, and intelligent automation.
 
+[![CI](https://github.com/darthmario/simple-chores/actions/workflows/ci.yaml/badge.svg)](https://github.com/darthmario/simple-chores/actions/workflows/ci.yaml)
 [![HACS Validation](https://github.com/darthmario/simple-chores/actions/workflows/hacs.yaml/badge.svg)](https://github.com/darthmario/simple-chores/actions/workflows/hacs.yaml)
 [![Hassfest Validation](https://github.com/darthmario/simple-chores/actions/workflows/hassfest.yaml/badge.svg)](https://github.com/darthmario/simple-chores/actions/workflows/hassfest.yaml)
 
@@ -375,6 +376,68 @@ automation:
           title: "Overdue Chores!"
           message: "You have {{ states('sensor.simple_chores_overdue') }} overdue chore(s)"
 ```
+
+## Contributing
+
+### Development Setup
+
+1. Clone the repository
+2. Install dev dependencies:
+   ```bash
+   pip install -r requirements_dev.txt
+   ```
+3. Set up pre-commit hooks:
+   ```bash
+   pip install pre-commit
+   pre-commit install
+   ```
+
+### Running Tests
+
+```bash
+# Run all tests
+pytest tests/ -v
+
+# Run with coverage
+pytest tests/ --cov=custom_components/simple_chores --cov-report=term-missing
+```
+
+### Code Quality
+
+```bash
+# Lint code
+ruff check custom_components/simple_chores
+
+# Format code
+ruff format custom_components/simple_chores
+
+# Type check
+mypy custom_components/simple_chores
+```
+
+### Branch Protection
+
+This repository uses branch protection on `main`. All PRs must pass:
+
+- **CI** - Linting (ruff), type checking (mypy), and tests (pytest)
+- **HACS Validation** - HACS integration requirements
+- **Hassfest Validation** - Home Assistant manifest requirements
+
+#### Setting Up Branch Protection (Maintainers)
+
+1. Go to **Settings** → **Branches** → **Add branch protection rule**
+2. Branch name pattern: `main`
+3. Enable:
+   - ✅ Require a pull request before merging
+   - ✅ Require status checks to pass before merging
+   - ✅ Require branches to be up to date before merging
+4. Add required status checks:
+   - `Lint`
+   - `Type Check`
+   - `Test`
+   - `HACS Validation`
+   - `Hassfest Validation`
+5. Click **Create** or **Save changes**
 
 ## License
 
