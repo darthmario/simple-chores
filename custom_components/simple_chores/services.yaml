@@ -183,19 +183,19 @@ add_chore:
         select:
           multiple: true
           options:
-            - value: 0
+            - value: "0"
               label: "Sunday"
-            - value: 1
+            - value: "1"
               label: "Monday"
-            - value: 2
+            - value: "2"
               label: "Tuesday"
-            - value: 3
+            - value: "3"
               label: "Wednesday"
-            - value: 4
+            - value: "4"
               label: "Thursday"
-            - value: 5
+            - value: "5"
               label: "Friday"
-            - value: 6
+            - value: "6"
               label: "Saturday"
     anchor_type:
       name: Anchor Type
@@ -225,15 +225,15 @@ add_chore:
       selector:
         select:
           options:
-            - value: 1
+            - value: "1"
               label: "First"
-            - value: 2
+            - value: "2"
               label: "Second"
-            - value: 3
+            - value: "3"
               label: "Third"
-            - value: 4
+            - value: "4"
               label: "Fourth"
-            - value: 5
+            - value: "5"
               label: "Last"
     anchor_weekday:
       name: Anchor Weekday
@@ -243,19 +243,19 @@ add_chore:
       selector:
         select:
           options:
-            - value: 0
+            - value: "0"
               label: "Sunday"
-            - value: 1
+            - value: "1"
               label: "Monday"
-            - value: 2
+            - value: "2"
               label: "Tuesday"
-            - value: 3
+            - value: "3"
               label: "Wednesday"
-            - value: 4
+            - value: "4"
               label: "Thursday"
-            - value: 5
+            - value: "5"
               label: "Friday"
-            - value: 6
+            - value: "6"
               label: "Saturday"
     interval:
       name: Interval
@@ -358,19 +358,19 @@ update_chore:
         select:
           multiple: true
           options:
-            - value: 0
+            - value: "0"
               label: "Sunday"
-            - value: 1
+            - value: "1"
               label: "Monday"
-            - value: 2
+            - value: "2"
               label: "Tuesday"
-            - value: 3
+            - value: "3"
               label: "Wednesday"
-            - value: 4
+            - value: "4"
               label: "Thursday"
-            - value: 5
+            - value: "5"
               label: "Friday"
-            - value: 6
+            - value: "6"
               label: "Saturday"
     anchor_type:
       name: Anchor Type
@@ -398,15 +398,15 @@ update_chore:
       selector:
         select:
           options:
-            - value: 1
+            - value: "1"
               label: "First"
-            - value: 2
+            - value: "2"
               label: "Second"
-            - value: 3
+            - value: "3"
               label: "Third"
-            - value: 4
+            - value: "4"
               label: "Fourth"
-            - value: 5
+            - value: "5"
               label: "Last"
     anchor_weekday:
       name: Anchor Weekday
@@ -415,19 +415,19 @@ update_chore:
       selector:
         select:
           options:
-            - value: 0
+            - value: "0"
               label: "Sunday"
-            - value: 1
+            - value: "1"
               label: "Monday"
-            - value: 2
+            - value: "2"
               label: "Tuesday"
-            - value: 3
+            - value: "3"
               label: "Wednesday"
-            - value: 4
+            - value: "4"
               label: "Thursday"
-            - value: 5
+            - value: "5"
               label: "Friday"
-            - value: 6
+            - value: "6"
               label: "Saturday"
     interval:
       name: Interval
