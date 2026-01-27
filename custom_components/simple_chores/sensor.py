@@ -262,7 +262,7 @@ class SimpleChoresTotalSensor(SimpleChoresBaseSensor):
         _LOGGER.debug(
             "Total sensor attributes: %d chores, %d history entries",
             len(all_chores),
-            len(history)
+            len(history),
         )
 
         return {

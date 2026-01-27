@@ -350,8 +350,14 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             all_active_chores.append(chore_with_room)
 
             # Debug logging for troubleshooting
-            _LOGGER.debug("Chore: %s, Room ID: %s, Room Name: %s, Next Due: %s, Assigned To: %s",
-                         chore["name"], chore["room_id"], room_name, chore["next_due"], chore.get("assigned_to"))
+            _LOGGER.debug(
+                "Chore: %s, Room ID: %s, Room Name: %s, Next Due: %s, Assigned To: %s",
+                chore["name"],
+                chore["room_id"],
+                room_name,
+                chore["next_due"],
+                chore.get("assigned_to"),
+            )
 
             # Categorize by due date
             if next_due < today:
@@ -390,8 +396,13 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "total_chores": len(all_active_chores),
         }
 
-        _LOGGER.debug("Data update complete. Total chores: %d, Due today: %d, Due this week: %d, Overdue: %d",
-                     len(self.store.chores), len(due_today), len(due_this_week), len(overdue))
+        _LOGGER.debug(
+            "Data update complete. Total chores: %d, Due today: %d, Due this week: %d, Overdue: %d",
+            len(self.store.chores),
+            len(due_today),
+            len(due_this_week),
+            len(overdue),
+        )
 
         return result
 
@@ -610,8 +621,12 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 f"Please create the room first or use an existing HA Area."
             )
 
-        _LOGGER.info("Coordinator: Adding chore '%s' with recurrence_type: %s, assigned_to: %s",
-                    name, recurrence_type, assigned_to)
+        _LOGGER.info(
+            "Coordinator: Adding chore '%s' with recurrence_type: %s, assigned_to: %s",
+            name,
+            recurrence_type,
+            assigned_to,
+        )
         chore = self.store.add_chore(
             name, room_id, frequency, start_date, assigned_to,
             recurrence_type, anchor_days_of_week, anchor_type,

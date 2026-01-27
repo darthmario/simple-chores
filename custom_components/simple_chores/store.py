@@ -172,8 +172,11 @@ class SimpleChoresStore:
         # Log and delete associated chores
         for chore_id in chores_to_remove:
             chore_name = self._data["chores"][chore_id].get("name", "Unknown")
-            _LOGGER.info("Removing chore '%s' (ID: %s) due to room deletion",
-                        chore_name, chore_id)
+            _LOGGER.info(
+                "Removing chore '%s' (ID: %s) due to room deletion",
+                chore_name,
+                chore_id,
+            )
             del self._data["chores"][chore_id]
 
         # Remove the room
@@ -184,7 +187,7 @@ class SimpleChoresStore:
             _LOGGER.warning(
                 "Removed room '%s' and deleted %d associated chore(s)",
                 room_name,
-                len(chores_to_remove)
+                len(chores_to_remove),
             )
 
         return True
@@ -319,8 +322,12 @@ class SimpleChoresStore:
         }
 
         # Debug logging for assignment
-        _LOGGER.info("Creating chore '%s' with recurrence_type: %s, assigned_to: %s",
-                    name, recurrence_type, assigned_to)
+        _LOGGER.info(
+            "Creating chore '%s' with recurrence_type: %s, assigned_to: %s",
+            name,
+            recurrence_type,
+            assigned_to,
+        )
         self._data["chores"][chore_id] = chore
         return chore
 
@@ -491,7 +498,7 @@ class SimpleChoresStore:
             "Added history entry for chore '%s' completed by %s. Total history entries: %d",
             chore["name"],
             user_name,
-            len(self._data["history"])
+            len(self._data["history"]),
         )
 
         # Efficient history cleanup to prevent memory bloat
@@ -515,7 +522,7 @@ class SimpleChoresStore:
         _LOGGER.debug(
             "History cleanup: removed %d old entries, kept %d most recent",
             entries_to_remove,
-            len(self._data["history"])
+            len(self._data["history"]),
         )
 
     def skip_chore(self, chore_id: str, next_due: date) -> dict[str, Any] | None:

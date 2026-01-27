@@ -48,7 +48,7 @@ async def register_frontend_resources(hass: HomeAssistant, domain: str) -> None:
             _LOGGER.error("Card file not found at: %s", card_file)
             _LOGGER.error(
                 "Please ensure simple-chores-card.js exists in custom_components/%s/www/",
-                domain
+                domain,
             )
             return
 
@@ -136,10 +136,10 @@ def _logger_manual_instructions(domain: str) -> None:
     _LOGGER.warning(
         "1. Copy custom_components/%s/www/simple-chores-card.js to config/www/community/%s/",
         domain,
-        domain
+        domain,
     )
     _LOGGER.warning(
         "2. Add '/local/community/%s/simple-chores-card.js' to Lovelace resources",
-        domain
+        domain,
     )
     _LOGGER.warning("3. Set resource type to 'JavaScript Module'")

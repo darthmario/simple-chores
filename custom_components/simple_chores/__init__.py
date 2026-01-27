@@ -605,7 +605,8 @@ async def _async_send_due_notification(
                 else:
                     _LOGGER.debug(
                         "No notification service found for user %s (%s), falling back to broadcast",
-                        user_name, user_id
+                        user_name,
+                        user_id,
                     )
                     # Fallback to broadcast if user's device not found
                     targets = configured_targets if configured_targets else all_mobile_apps
