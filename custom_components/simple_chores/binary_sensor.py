@@ -16,6 +16,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import SimpleChoresCoordinator
+from .entity import get_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ class SimpleChoresHasOverdueSensor(CoordinatorEntity[SimpleChoresCoordinator], B
         self._attr_unique_id = f"{entry.entry_id}_has_overdue"
         self._attr_name = "Has Overdue Chores"
         self._attr_icon = "mdi:alert"
+        self._attr_device_info = get_device_info(entry)
 
     @property
     def is_on(self) -> bool:

@@ -8,9 +8,12 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN,
+    RECURRENCE_ANCHORED,
+    RECURRENCE_INTERVAL,
     ROOM_PREFIX_AREA,
 )
 from .recurrence import calculate_next_due_for_chore
@@ -43,11 +46,11 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.store = store
         self.config_entry = config_entry
-        self._room_name_cache: dict[str, str] | None = {}
+        self._room_name_cache: dict[str, str] | None = None
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Calculate due chores and prepare data for entities."""
-        today = date.today()
+        today = dt_util.now().date()
         # Use rolling 7-day window instead of calendar week
         next_seven_days = today + timedelta(days=7)
 
@@ -218,12 +221,12 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return None
 
         chore = self.store.chores[chore_id]
-        today = date.today()
+        today = dt_util.now().date()
 
         # For anchored recurrence, calculate from the current due date to maintain pattern
         # For interval-based, calculate from today (completion date)
-        recurrence_type = chore.get("recurrence_type", "interval")
-        if recurrence_type == "anchored" and chore.get("next_due"):
+        recurrence_type = chore.get("recurrence_type", RECURRENCE_INTERVAL)
+        if recurrence_type == RECURRENCE_ANCHORED and chore.get("next_due"):
             current_due = date.fromisoformat(chore["next_due"])
             # Use whichever is later to ensure we get the NEXT occurrence
             calc_from = max(today, current_due)

@@ -13,6 +13,11 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+CARD_FILENAME = "simple-chores-card.js"
+# hass.data key tracking URLs already passed to add_extra_js_url, so
+# integration reloads don't register the same resource twice
+DATA_REGISTERED_URLS = "simple_chores_registered_js_urls"
+
 
 def _get_integration_version() -> str:
     """Read version from manifest.json for cache busting.
@@ -43,12 +48,13 @@ async def register_frontend_resources(hass: HomeAssistant, domain: str) -> None:
     try:
         # Validate card file exists
         source_path = hass.config.path(f"custom_components/{domain}/www")
-        card_file = os.path.join(source_path, "simple-chores-card.js")
+        card_file = os.path.join(source_path, CARD_FILENAME)
 
         if not os.path.exists(card_file):
             _LOGGER.error("Card file not found at: %s", card_file)
             _LOGGER.error(
-                "Please ensure simple-chores-card.js exists in custom_components/%s/www/",
+                "Please ensure %s exists in custom_components/%s/www/",
+                CARD_FILENAME,
                 domain,
             )
             return
@@ -82,11 +88,11 @@ async def _register_hacs_compatible(hass: HomeAssistant, domain: str, source_fil
 
         # Define target directory following HACS convention
         target_dir = hass.config.path(f"www/community/{domain}")
-        target_file = os.path.join(target_dir, "simple-chores-card.js")
+        target_file = os.path.join(target_dir, CARD_FILENAME)
 
         # Get version for cache busting
         version = _get_integration_version()
-        card_url = f"/local/community/{domain}/simple-chores-card.js?v={version}"
+        card_url = f"/local/community/{domain}/{CARD_FILENAME}?v={version}"
 
         _LOGGER.debug("Using version %s for cache busting", version)
 
@@ -99,8 +105,14 @@ async def _register_hacs_compatible(hass: HomeAssistant, domain: str, source_fil
 
         await hass.async_add_executor_job(_copy_card_file)
 
-        # Register with Home Assistant frontend
+        # Register with Home Assistant frontend (once per URL, so config
+        # entry reloads don't accumulate duplicate registrations)
+        registered_urls: set[str] = hass.data.setdefault(DATA_REGISTERED_URLS, set())
+        if card_url in registered_urls:
+            _LOGGER.debug("Card URL already registered, skipping: %s", card_url)
+            return
         add_extra_js_url(hass, card_url)
+        registered_urls.add(card_url)
 
         _LOGGER.info("Successfully registered Simple Chores card v%s", version)
         _LOGGER.info("Card URL: %s", card_url)

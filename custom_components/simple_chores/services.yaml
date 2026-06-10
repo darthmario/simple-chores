@@ -334,7 +334,7 @@ update_chore:
         date:
     assigned_to:
       name: Assigned To
-      description: User ID to assign this chore to (use null to unassign).
+      description: User ID to assign this chore to. Pass an empty string to unassign; omit to leave unchanged.
       required: false
       example: "user-uuid"
       selector:

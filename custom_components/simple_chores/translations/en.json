@@ -74,6 +74,48 @@
         }
       }
     },
+    "add_user": {
+      "name": "Add User",
+      "description": "Create a new custom user (no Home Assistant login required).",
+      "fields": {
+        "name": {
+          "name": "Name",
+          "description": "The name of the user."
+        },
+        "avatar": {
+          "name": "Avatar",
+          "description": "MDI icon for the user avatar."
+        }
+      }
+    },
+    "remove_user": {
+      "name": "Remove User",
+      "description": "Delete a custom user.",
+      "fields": {
+        "user_id": {
+          "name": "User ID",
+          "description": "The ID of the user to remove."
+        }
+      }
+    },
+    "update_user": {
+      "name": "Update User",
+      "description": "Update a custom user's details.",
+      "fields": {
+        "user_id": {
+          "name": "User ID",
+          "description": "The ID of the user to update."
+        },
+        "name": {
+          "name": "Name",
+          "description": "The new name for the user."
+        },
+        "avatar": {
+          "name": "Avatar",
+          "description": "The new avatar icon for the user."
+        }
+      }
+    },
     "add_chore": {
       "name": "Add Chore",
       "description": "Create a new chore.",
@@ -149,6 +191,16 @@
         "chore_id": {
           "name": "Chore ID",
           "description": "The ID of the chore to skip."
+        }
+      }
+    },
+    "snooze_chore": {
+      "name": "Snooze Chore",
+      "description": "Postpone a chore by 1 day without marking it complete.",
+      "fields": {
+        "chore_id": {
+          "name": "Chore ID",
+          "description": "The ID of the chore to snooze."
         }
       }
     },

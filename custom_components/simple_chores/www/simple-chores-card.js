@@ -111,6 +111,8 @@ class SimpleChoresCard extends LitElement {
       // Timeout delays (milliseconds)
       MODAL_FOCUS_DELAY: 100,
       RETRY_DELAY: 500,
+      // How long to keep an optimistic chore update before trusting sensor data
+      OPTIMISTIC_UPDATE_DELAY: 1000,
 
       // Cache TTLs (milliseconds)
       ROOM_CACHE_TTL: 30000,  // 30 seconds
@@ -119,6 +121,22 @@ class SimpleChoresCard extends LitElement {
       // Display limits
       DEFAULT_CHORE_LIMIT: 20,
       MAX_RETRY_ATTEMPTS: 10,
+
+      // Below this card width (px), the calendar switches to agenda view
+      AGENDA_VIEW_WIDTH_THRESHOLD: 500,
+      // Max projected future occurrences generated per chore for the calendar
+      MAX_FUTURE_OCCURRENCES: 12,
+      // How many days ahead to search for an anchored weekly occurrence (8 weeks)
+      ANCHORED_SEARCH_DAYS: 56,
+
+      // Statistics dashboard time periods
+      STATS_DEFAULT_PERIOD: '4w',
+      STATS_PERIODS: {
+        '7d': { label: '7 Days', days: 7, groupBy: 'day', labels: 7 },
+        '4w': { label: '4 Weeks', days: 28, groupBy: 'week', labels: 4 },
+        '3m': { label: '3 Months', days: 90, groupBy: 'month', labels: 3 },
+        '1y': { label: '1 Year', days: 365, groupBy: 'month', labels: 12 },
+      },
     };
   }
 
@@ -171,7 +189,7 @@ class SimpleChoresCard extends LitElement {
     this._userOverrodeCalendarMode = false;
     // Statistics dashboard
     this._showExpandedStats = false;
-    this._statsTimePeriod = '4w';  // Default to 4 weeks
+    this._statsTimePeriod = this.constructor.constants.STATS_DEFAULT_PERIOD;
     this._statsCache = { data: null, lastUpdate: 0, ttl: 60000 };  // 1 minute cache
     // Performance caching
     this._cache = {
@@ -210,8 +228,28 @@ class SimpleChoresCard extends LitElement {
       { icon: 'mdi:account-star', label: 'Custom 4' },
     ];
 
+    // Track pending timeouts so they can be cancelled on disconnect
+    this._pendingTimeouts = new Set();
+
     // Bind keyboard handler for proper removal
     this._handleKeydown = this._handleKeydown.bind(this);
+  }
+
+  /**
+   * setTimeout wrapper that tracks the timer ID so pending timers can be
+   * cancelled in disconnectedCallback(). The ID is removed from the set
+   * automatically when the timer fires.
+   * @param {Function} fn - Callback to run
+   * @param {number} ms - Delay in milliseconds
+   * @returns {number} Timer ID
+   */
+  _setTimeout(fn, ms) {
+    const id = setTimeout(() => {
+      this._pendingTimeouts.delete(id);
+      fn();
+    }, ms);
+    this._pendingTimeouts.add(id);
+    return id;
   }
 
   connectedCallback() {
@@ -229,6 +267,59 @@ class SimpleChoresCard extends LitElement {
       this._resizeObserver.disconnect();
       this._resizeObserver = null;
     }
+    // Cancel any pending timeouts
+    for (const id of this._pendingTimeouts) {
+      clearTimeout(id);
+    }
+    this._pendingTimeouts.clear();
+  }
+
+  /**
+   * Skip re-renders for hass updates that don't affect any entity this card
+   * reads. Any internal reactive property change (modals, forms, filters)
+   * still triggers a render. The check is conservative: if anything relevant
+   * might have changed, we allow the update.
+   * @param {Map} changedProps - Changed reactive properties
+   * @returns {boolean} Whether the component should re-render
+   */
+  shouldUpdate(changedProps) {
+    // Only gate when hass is the ONLY thing that changed
+    if (changedProps.size !== 1 || !changedProps.has('hass')) {
+      return true;
+    }
+
+    const oldHass = changedProps.get('hass');
+    if (!oldHass || !this.hass) {
+      return true;
+    }
+
+    // Non-state hass data the card reads
+    if (oldHass.user !== this.hass.user) return true;
+    if (oldHass.areas !== this.hass.areas) return true;
+
+    // Entities the card renders from
+    const S = SimpleChoresCard.SENSORS;
+    const watchedEntities = [
+      S.DUE_TODAY,
+      S.DUE_NEXT_7_DAYS,
+      S.OVERDUE,
+      S.TOTAL,
+      "calendar.household_tasks",
+    ];
+
+    for (const entityId of watchedEntities) {
+      const oldState = oldHass.states[entityId];
+      const newState = this.hass.states[entityId];
+      if (oldState === newState) continue;
+      // Entity appeared/disappeared or its state object was replaced
+      if (!oldState || !newState) return true;
+      if (oldState.state !== newState.state) return true;
+      if (oldState.last_updated !== newState.last_updated) return true;
+      if (oldState.attributes !== newState.attributes) return true;
+    }
+
+    // Nothing this card displays has changed
+    return false;
   }
 
   firstUpdated() {
@@ -245,7 +336,7 @@ class SimpleChoresCard extends LitElement {
         this._cardWidth = width;
         // Auto-switch calendar mode based on width
         // Under 500px, use agenda view for better readability
-        const newMode = width < 500 ? 'agenda' : 'grid';
+        const newMode = width < this.constructor.constants.AGENDA_VIEW_WIDTH_THRESHOLD ? 'agenda' : 'grid';
         if (this._calendarMode !== newMode && !this._userOverrodeCalendarMode) {
           this._calendarMode = newMode;
         }
@@ -343,7 +434,8 @@ class SimpleChoresCard extends LitElement {
         choreId: "",
         choreName: "",
         completedBy: "",
-        reassignTo: ""
+        reassignTo: "",
+        originalAssignedTo: ""
       }
     };
   }
@@ -422,7 +514,8 @@ class SimpleChoresCard extends LitElement {
         choreId: "",
         choreName: "",
         completedBy: "",
-        reassignTo: ""
+        reassignTo: "",
+        originalAssignedTo: ""
       };
     }
     this.requestUpdate();
@@ -715,7 +808,8 @@ class SimpleChoresCard extends LitElement {
     if (this._selectedAssignee === 'all') return 'Anyone';
     if (this._selectedAssignee === 'mine') return 'My Chores';
     const user = users.find(u => u.id === this._selectedAssignee);
-    return user ? user.name : 'Anyone';
+    // Fall back to the raw ID, then 'Anyone', so we never render an empty name
+    return (user && user.name) || this._selectedAssignee || 'Anyone';
   }
 
   _handleHeaderClick(e) {
@@ -857,12 +951,8 @@ class SimpleChoresCard extends LitElement {
   }
 
   _renderTimePeriodToggle() {
-    const periods = [
-      { value: '7d', label: '7 Days' },
-      { value: '4w', label: '4 Weeks' },
-      { value: '3m', label: '3 Months' },
-      { value: '1y', label: '1 Year' }
-    ];
+    const periods = Object.entries(this.constructor.constants.STATS_PERIODS)
+      .map(([value, cfg]) => ({ value, label: cfg.label }));
 
     return html`
       <div class="stats-period-toggle">
@@ -1042,10 +1132,12 @@ class SimpleChoresCard extends LitElement {
     if (assignedTo) {
       const users = this._getUsers();
       const assignedUser = users.find(u => u.id === assignedTo);
-      assignedUserName = assignedUser ? assignedUser.name : assignedTo;
+      // Fall back to the raw ID (guarded truthy above) if the user record
+      // is missing or has no name, so we never render "null"/"undefined"
+      assignedUserName = (assignedUser && assignedUser.name) || assignedTo;
     }
 
-    const isOverdue = new Date(dueDate) < new Date().setHours(0,0,0,0);
+    const isOverdue = this._parseLocalDate(dueDate) < new Date().setHours(0,0,0,0);
     const isMenuOpen = this._activeChoreMenu === chore.id;
 
     // Use modal-specific handlers if in modal context
@@ -1281,7 +1373,7 @@ class SimpleChoresCard extends LitElement {
       const searchDate = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1);
 
       // Search up to 8 weeks ahead
-      for (let i = 0; i < 56; i++) {
+      for (let i = 0; i < this.constructor.constants.ANCHORED_SEARCH_DAYS; i++) {
         const dayOfWeek = searchDate.getDay();
         if (anchorDays.includes(dayOfWeek)) {
           // Check if this is within the correct week interval
@@ -1373,9 +1465,9 @@ class SimpleChoresCard extends LitElement {
     const startDate = this._parseLocalDate(chore.next_due || chore.due_date);
     let currentDate = this._calculateNextOccurrenceForChore(chore, startDate);
 
-    // Generate up to 12 future occurrences or until endDate
+    // Generate future occurrences up to the configured cap or until endDate
     let count = 0;
-    const maxOccurrences = 12;
+    const maxOccurrences = this.constructor.constants.MAX_FUTURE_OCCURRENCES;
 
     while (currentDate && currentDate <= endDate && count < maxOccurrences) {
       occurrences.push({
@@ -1575,7 +1667,7 @@ class SimpleChoresCard extends LitElement {
           const choresOnDate = choresByDate[dateStr] || [];
           const completedOnDate = completedByDate[dateStr] || [];
           const isToday = dateStr === todayStr;
-          const isPast = new Date(dateStr) < new Date(todayStr);
+          const isPast = this._parseLocalDate(dateStr) < this._parseLocalDate(todayStr);
 
           return html`
             <div
@@ -1637,7 +1729,7 @@ class SimpleChoresCard extends LitElement {
 
   _renderAgendaContent(choresByDate, completedByDate, todayStr, daysInMonth) {
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const today = new Date(todayStr);
+    const today = this._parseLocalDate(todayStr);
 
     // Build array of all days in the month
     const allDays = [];
@@ -1646,7 +1738,7 @@ class SimpleChoresCard extends LitElement {
       const choresOnDate = choresByDate[dateStr] || [];
       const completedOnDate = completedByDate[dateStr] || [];
 
-      const dateObj = new Date(dateStr);
+      const dateObj = this._parseLocalDate(dateStr);
       const isPast = dateObj < today;
       const isToday = dateStr === todayStr;
       const dayOfWeek = dayNames[dateObj.getDay()];
@@ -1771,12 +1863,12 @@ class SimpleChoresCard extends LitElement {
       });
 
       // Wait a bit for the state to update, then clear optimistic update
-      setTimeout(() => {
+      this._setTimeout(() => {
         const updates = { ...this._optimisticChoreUpdates };
         delete updates[chore.id];
         this._optimisticChoreUpdates = updates;
         this.requestUpdate();
-      }, 1000);
+      }, this.constructor.constants.OPTIMISTIC_UPDATE_DELAY);
 
       this._showToast(`${chore.name} rescheduled to ${this._formatDate(newDateStr)}`);
     } catch (error) {
@@ -2092,7 +2184,7 @@ class SimpleChoresCard extends LitElement {
     this._resetForm('room');
 
     // Focus first input after modal renders
-    setTimeout(() => {
+    this._setTimeout(() => {
       const input = this.shadowRoot.querySelector('#room-name');
       if (input) input.focus();
     }, this.constructor.constants.MODAL_FOCUS_DELAY);
@@ -2160,7 +2252,7 @@ class SimpleChoresCard extends LitElement {
 
       // Wait and check if the room data updates
       const checkForRoom = (attempts = 0) => {
-        setTimeout(() => {
+        this._setTimeout(() => {
           const roomsAfter = this._getRooms();
           const foundNewRoom = roomsAfter.find(room =>
             room.name.toLowerCase() === roomName.toLowerCase()
@@ -2195,21 +2287,46 @@ class SimpleChoresCard extends LitElement {
     }
   }
 
+  /**
+   * Renders the shared modal wrapper: overlay (click to close), dialog
+   * container with aria attributes and click propagation stopped, and a
+   * header with title + close button.
+   * @param {string} titleId - id used for the h3 and aria-labelledby
+   * @param {string|Object} title - Title content (string or lit template)
+   * @param {Function} onClose - Handler for overlay click and close button
+   * @param {Object} body - lit template placed inside .modal-body
+   * @param {Object} [options]
+   * @param {string} [options.contentClass] - Extra class(es) on .modal-content
+   * @param {Object} [options.footer] - lit template for .modal-footer
+   * @param {Function} [options.onBodyClick] - Optional click handler on .modal-body
+   * @returns {Object} lit template
+   */
+  _renderModalShell(titleId, title, onClose, body, options = {}) {
+    const { contentClass = "", footer = null, onBodyClick = null } = options;
+    return html`
+      <div class="modal-overlay" @click=${onClose}>
+        <div class="modal-content${contentClass ? ` ${contentClass}` : ''}" role="dialog" aria-modal="true" aria-labelledby="${titleId}" @click=${(e) => e.stopPropagation()}>
+          <div class="modal-header">
+            <h3 id="${titleId}">${title}</h3>
+            <button class="close-btn" @click=${onClose} aria-label="Close dialog">
+              <ha-icon icon="mdi:close"></ha-icon>
+            </button>
+          </div>
+          <div class="modal-body" @click=${onBodyClick}>
+            ${body}
+          </div>
+          ${footer !== null ? html`<div class="modal-footer">${footer}</div>` : ''}
+        </div>
+      </div>
+    `;
+  }
+
   _renderAddRoomModal() {
     if (!this._showAddRoomModal) {
       return html``;
     }
 
-    return html`
-      <div class="modal-overlay" @click=${this._closeAddRoomModal}>
-        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="add-room-title" @click=${(e) => e.stopPropagation()}>
-          <div class="modal-header">
-            <h3 id="add-room-title">Add Custom Room</h3>
-            <button class="close-btn" @click=${this._closeAddRoomModal} aria-label="Close dialog">
-              <ha-icon icon="mdi:close"></ha-icon>
-            </button>
-          </div>
-          <div class="modal-body">
+    const body = html`
             <div class="form-group">
               <label for="room-name">Room Name *</label>
               <input
@@ -2252,20 +2369,20 @@ class SimpleChoresCard extends LitElement {
                 </div>
               </div>
             </div>
-          </div>
-          <div class="modal-footer">
-            <button class="cancel-btn" @click=${this._closeAddRoomModal} ?disabled=${this._isLoading}>Cancel</button>
-            <button
-              class="submit-btn ${this._isLoading ? 'loading' : ''}"
-              @click=${this._submitAddRoom}
-              ?disabled=${!this._formData.room.name?.trim() || this._isLoading}>
-              ${this._isLoading ? html`<span class="spinner"></span>` : ''}
-              Create Room
-            </button>
-          </div>
-        </div>
-      </div>
     `;
+
+    const footer = html`
+      <button class="cancel-btn" @click=${this._closeAddRoomModal} ?disabled=${this._isLoading}>Cancel</button>
+      <button
+        class="submit-btn ${this._isLoading ? 'loading' : ''}"
+        @click=${this._submitAddRoom}
+        ?disabled=${!this._formData.room.name?.trim() || this._isLoading}>
+        ${this._isLoading ? html`<span class="spinner"></span>` : ''}
+        Create Room
+      </button>
+    `;
+
+    return this._renderModalShell("add-room-title", "Add Custom Room", this._closeAddRoomModal, body, { footer });
   }
 
   _openManageRoomsModal() {
@@ -2293,7 +2410,7 @@ class SimpleChoresCard extends LitElement {
       this._invalidateCache('rooms');
 
       // Wait for coordinator to refresh and sensor to update
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => this._setTimeout(resolve, 500));
 
       // Force UI update with fresh data
       this.requestUpdate();
@@ -2316,7 +2433,7 @@ class SimpleChoresCard extends LitElement {
     this._resetForm('user');
 
     // Focus first input after modal renders
-    setTimeout(() => {
+    this._setTimeout(() => {
       const input = this.shadowRoot.querySelector('#user-name');
       if (input) input.focus();
     }, this.constructor.constants.MODAL_FOCUS_DELAY);
@@ -2354,7 +2471,7 @@ class SimpleChoresCard extends LitElement {
       this._showToast(`User "${this._formData.user.name}" added successfully!`);
 
       // Wait for coordinator to refresh and sensor to update
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => this._setTimeout(resolve, 500));
 
       this._invalidateCache('users');
       this._closeAddUserModal();
@@ -2397,7 +2514,7 @@ class SimpleChoresCard extends LitElement {
       this.requestUpdate();
 
       // Wait for coordinator to refresh and sensor to update
-      await new Promise(resolve => setTimeout(resolve, 800));
+      await new Promise(resolve => this._setTimeout(resolve, 800));
 
       // Invalidate again and update with fresh data from sensor
       this._invalidateCache('users');
@@ -2419,7 +2536,7 @@ class SimpleChoresCard extends LitElement {
     this._showEditUserModal = true;
 
     // Focus first input after modal renders
-    setTimeout(() => {
+    this._setTimeout(() => {
       const input = this.shadowRoot.querySelector('#edit-user-name');
       if (input) input.focus();
     }, this.constructor.constants.MODAL_FOCUS_DELAY);
@@ -2453,7 +2570,7 @@ class SimpleChoresCard extends LitElement {
       this._showToast(`User "${this._formData.user.name}" updated successfully!`);
 
       // Wait for coordinator to refresh and sensor to update
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => this._setTimeout(resolve, 500));
 
       this._invalidateCache('users');
       this._closeEditUserModal();
@@ -2475,16 +2592,7 @@ class SimpleChoresCard extends LitElement {
     const rooms = this._getRooms();
     const customRooms = rooms.filter(room => room.is_custom);
 
-    return html`
-      <div class="modal-overlay" @click=${this._closeManageRoomsModal}>
-        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="manage-rooms-title" @click=${(e) => e.stopPropagation()}>
-          <div class="modal-header">
-            <h3 id="manage-rooms-title">Manage Custom Rooms</h3>
-            <button class="close-btn" @click=${this._closeManageRoomsModal} aria-label="Close dialog">
-              <ha-icon icon="mdi:close"></ha-icon>
-            </button>
-          </div>
-          <div class="modal-body">
+    const body = html`
             ${customRooms.length === 0 ? html`
               <p class="no-custom-rooms">No custom rooms found. Use the + button to add rooms.</p>
             ` : html`
@@ -2506,13 +2614,13 @@ class SimpleChoresCard extends LitElement {
                 `)}
               </div>
             `}
-          </div>
-          <div class="modal-footer">
-            <button class="cancel-btn" @click=${this._closeManageRoomsModal}>Close</button>
-          </div>
-        </div>
-      </div>
     `;
+
+    const footer = html`
+      <button class="cancel-btn" @click=${this._closeManageRoomsModal}>Close</button>
+    `;
+
+    return this._renderModalShell("manage-rooms-title", "Manage Custom Rooms", this._closeManageRoomsModal, body, { footer });
   }
 
   _openAddChoreModal(preselectedRoom) {
@@ -2526,7 +2634,7 @@ class SimpleChoresCard extends LitElement {
     }
 
     // Focus first input after modal renders
-    setTimeout(() => {
+    this._setTimeout(() => {
       const input = this.shadowRoot.querySelector('#chore-name');
       if (input) input.focus();
     }, this.constructor.constants.MODAL_FOCUS_DELAY);
@@ -2767,16 +2875,7 @@ class SimpleChoresCard extends LitElement {
       return html``;
     }
 
-    return html`
-      <div class="modal-overlay" @click=${this._closeAddUserModal}>
-        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="add-user-title" @click=${(e) => e.stopPropagation()}>
-          <div class="modal-header">
-            <h3 id="add-user-title">Add Custom User</h3>
-            <button class="close-btn" @click=${this._closeAddUserModal} aria-label="Close dialog">
-              <ha-icon icon="mdi:close"></ha-icon>
-            </button>
-          </div>
-          <div class="modal-body">
+    const body = html`
             <div class="form-group">
               <label for="user-name">Name *</label>
               <input
@@ -2820,20 +2919,20 @@ class SimpleChoresCard extends LitElement {
                 </div>
               </div>
             </div>
-          </div>
-          <div class="modal-footer">
-            <button class="cancel-btn" @click=${this._closeAddUserModal} ?disabled=${this._isLoading}>Cancel</button>
-            <button
-              class="submit-btn ${this._isLoading ? 'loading' : ''}"
-              @click=${this._submitAddUser}
-              ?disabled=${!this._formData.user.name?.trim() || this._isLoading}>
-              ${this._isLoading ? html`<span class="spinner"></span>` : ''}
-              Add User
-            </button>
-          </div>
-        </div>
-      </div>
     `;
+
+    const footer = html`
+      <button class="cancel-btn" @click=${this._closeAddUserModal} ?disabled=${this._isLoading}>Cancel</button>
+      <button
+        class="submit-btn ${this._isLoading ? 'loading' : ''}"
+        @click=${this._submitAddUser}
+        ?disabled=${!this._formData.user.name?.trim() || this._isLoading}>
+        ${this._isLoading ? html`<span class="spinner"></span>` : ''}
+        Add User
+      </button>
+    `;
+
+    return this._renderModalShell("add-user-title", "Add Custom User", this._closeAddUserModal, body, { footer });
   }
 
   _renderManageUsersModal() {
@@ -2844,16 +2943,7 @@ class SimpleChoresCard extends LitElement {
     const users = this._getUsers();
     const customUsers = users.filter(user => user.is_custom);
 
-    return html`
-      <div class="modal-overlay" @click=${this._closeManageUsersModal}>
-        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="manage-users-title" @click=${(e) => e.stopPropagation()}>
-          <div class="modal-header">
-            <h3 id="manage-users-title">Manage Custom Users</h3>
-            <button class="close-btn" @click=${this._closeManageUsersModal} aria-label="Close dialog">
-              <ha-icon icon="mdi:close"></ha-icon>
-            </button>
-          </div>
-          <div class="modal-body">
+    const body = html`
             ${customUsers.length === 0 ? html`
               <p class="no-custom-users">No custom users found. Use the + button to add users.</p>
             ` : html`
@@ -2884,13 +2974,13 @@ class SimpleChoresCard extends LitElement {
                 `)}
               </div>
             `}
-          </div>
-          <div class="modal-footer">
-            <button class="cancel-btn" @click=${this._closeManageUsersModal}>Close</button>
-          </div>
-        </div>
-      </div>
     `;
+
+    const footer = html`
+      <button class="cancel-btn" @click=${this._closeManageUsersModal}>Close</button>
+    `;
+
+    return this._renderModalShell("manage-users-title", "Manage Custom Users", this._closeManageUsersModal, body, { footer });
   }
 
   _renderEditUserModal() {
@@ -2898,16 +2988,7 @@ class SimpleChoresCard extends LitElement {
       return html``;
     }
 
-    return html`
-      <div class="modal-overlay" @click=${this._closeEditUserModal}>
-        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="edit-user-title" @click=${(e) => e.stopPropagation()}>
-          <div class="modal-header">
-            <h3 id="edit-user-title">Edit User</h3>
-            <button class="close-btn" @click=${this._closeEditUserModal} aria-label="Close dialog">
-              <ha-icon icon="mdi:close"></ha-icon>
-            </button>
-          </div>
-          <div class="modal-body">
+    const body = html`
             <div class="form-group">
               <label for="edit-user-name">Name *</label>
               <input
@@ -2949,20 +3030,20 @@ class SimpleChoresCard extends LitElement {
                 </div>
               </div>
             </div>
-          </div>
-          <div class="modal-footer">
-            <button class="cancel-btn" @click=${this._closeEditUserModal} ?disabled=${this._isLoading}>Cancel</button>
-            <button
-              class="submit-btn ${this._isLoading ? 'loading' : ''}"
-              @click=${this._submitEditUser}
-              ?disabled=${!this._formData.user.name?.trim() || this._isLoading}>
-              ${this._isLoading ? html`<span class="spinner"></span>` : ''}
-              Update User
-            </button>
-          </div>
-        </div>
-      </div>
     `;
+
+    const footer = html`
+      <button class="cancel-btn" @click=${this._closeEditUserModal} ?disabled=${this._isLoading}>Cancel</button>
+      <button
+        class="submit-btn ${this._isLoading ? 'loading' : ''}"
+        @click=${this._submitEditUser}
+        ?disabled=${!this._formData.user.name?.trim() || this._isLoading}>
+        ${this._isLoading ? html`<span class="spinner"></span>` : ''}
+        Update User
+      </button>
+    `;
+
+    return this._renderModalShell("edit-user-title", "Edit User", this._closeEditUserModal, body, { footer });
   }
 
   _renderAddChoreModal() {
@@ -2972,16 +3053,7 @@ class SimpleChoresCard extends LitElement {
 
     const rooms = this._getRooms();
 
-    return html`
-      <div class="modal-overlay" @click=${this._closeAddChoreModal}>
-        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="add-chore-title" @click=${(e) => e.stopPropagation()}>
-          <div class="modal-header">
-            <h3 id="add-chore-title">Add New Chore</h3>
-            <button class="close-btn" @click=${this._closeAddChoreModal} aria-label="Close dialog">
-              <ha-icon icon="mdi:close"></ha-icon>
-            </button>
-          </div>
-          <div class="modal-body">
+    const body = html`
             <div class="form-group">
               <label for="chore-name">Chore Name *</label>
               <input 
@@ -3059,20 +3131,20 @@ class SimpleChoresCard extends LitElement {
               </select>
               <small>Assign this chore to a specific person or leave unassigned</small>
             </div>
-          </div>
-          <div class="modal-footer">
-            <button class="cancel-btn" @click=${this._closeAddChoreModal} ?disabled=${this._isLoading}>Cancel</button>
-            <button
-              class="submit-btn ${this._isLoading ? 'loading' : ''}"
-              @click=${this._submitAddChore}
-              ?disabled=${!this._formData.chore.name?.trim() || !this._formData.chore.room?.trim() || this._isLoading}>
-              ${this._isLoading ? html`<span class="spinner"></span>` : ''}
-              Create Chore
-            </button>
-          </div>
-        </div>
-      </div>
     `;
+
+    const footer = html`
+      <button class="cancel-btn" @click=${this._closeAddChoreModal} ?disabled=${this._isLoading}>Cancel</button>
+      <button
+        class="submit-btn ${this._isLoading ? 'loading' : ''}"
+        @click=${this._submitAddChore}
+        ?disabled=${!this._formData.chore.name?.trim() || !this._formData.chore.room?.trim() || this._isLoading}>
+        ${this._isLoading ? html`<span class="spinner"></span>` : ''}
+        Create Chore
+      </button>
+    `;
+
+    return this._renderModalShell("add-chore-title", "Add New Chore", this._closeAddChoreModal, body, { footer });
   }
 
   _editChore(chore) {
@@ -3112,7 +3184,7 @@ class SimpleChoresCard extends LitElement {
     this.requestUpdate();
 
     // Force update the select elements after modal is shown and focus first input
-    setTimeout(() => {
+    this._setTimeout(() => {
       const roomSelect = this.shadowRoot?.querySelector('#edit-chore-room');
       const assignSelect = this.shadowRoot?.querySelector('#edit-chore-assigned-to');
       const nameInput = this.shadowRoot?.querySelector('#edit-chore-name');
@@ -3171,16 +3243,7 @@ class SimpleChoresCard extends LitElement {
 
     const rooms = this._getRooms();
 
-    return html`
-      <div class="modal-overlay" @click=${this._closeEditChoreModal}>
-        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="edit-chore-title" @click=${(e) => e.stopPropagation()}>
-          <div class="modal-header">
-            <h3 id="edit-chore-title">Edit Chore</h3>
-            <button class="close-btn" @click=${this._closeEditChoreModal} aria-label="Close dialog">
-              <ha-icon icon="mdi:close"></ha-icon>
-            </button>
-          </div>
-          <div class="modal-body">
+    const body = html`
             <div class="form-group">
               <label for="edit-chore-name">Chore Name *</label>
               <input 
@@ -3255,20 +3318,20 @@ class SimpleChoresCard extends LitElement {
               </select>
               <small>Assign this chore to a specific person or leave unassigned</small>
             </div>
-          </div>
-          <div class="modal-footer">
-            <button class="cancel-btn" @click=${this._closeEditChoreModal} ?disabled=${this._isLoading}>Cancel</button>
-            <button
-              class="submit-btn ${this._isLoading ? 'loading' : ''}"
-              @click=${this._submitEditChore}
-              ?disabled=${!this._formData.chore.name?.trim() || !this._formData.chore.room?.trim() || this._isLoading}>
-              ${this._isLoading ? html`<span class="spinner"></span>` : ''}
-              Update Chore
-            </button>
-          </div>
-        </div>
-      </div>
     `;
+
+    const footer = html`
+      <button class="cancel-btn" @click=${this._closeEditChoreModal} ?disabled=${this._isLoading}>Cancel</button>
+      <button
+        class="submit-btn ${this._isLoading ? 'loading' : ''}"
+        @click=${this._submitEditChore}
+        ?disabled=${!this._formData.chore.name?.trim() || !this._formData.chore.room?.trim() || this._isLoading}>
+        ${this._isLoading ? html`<span class="spinner"></span>` : ''}
+        Update Chore
+      </button>
+    `;
+
+    return this._renderModalShell("edit-chore-title", "Edit Chore", this._closeEditChoreModal, body, { footer });
   }
 
   async _deleteChore(choreId, choreName) {
@@ -3347,16 +3410,7 @@ class SimpleChoresCard extends LitElement {
       ? `All Rooms (${rawChores.length})`
       : `${filterRoom?.name || 'Unknown'} (${roomChoreCounts[this._allChoresRoomFilter] || 0})`;
 
-    return html`
-      <div class="modal-overlay" @click=${this._closeAllChoresModal}>
-        <div class="modal-content large-modal" role="dialog" aria-modal="true" aria-labelledby="all-chores-title" @click=${(e) => e.stopPropagation()}>
-          <div class="modal-header">
-            <h3 id="all-chores-title">All Active Chores (${allChores.length})</h3>
-            <button class="close-btn" @click=${this._closeAllChoresModal} aria-label="Close dialog">
-              <ha-icon icon="mdi:close"></ha-icon>
-            </button>
-          </div>
-          <div class="modal-body" @click=${this._handleContentClick}>
+    const body = html`
             <div class="all-chores-toolbar">
               <select
                 class="room-filter-select"
@@ -3385,13 +3439,23 @@ class SimpleChoresCard extends LitElement {
                 ${allChores.map(chore => this._renderChore(chore, { inModal: true, showFrequency: true }))}
               </div>
             `}
-          </div>
-          <div class="modal-footer">
-            <button class="submit-btn" @click=${this._closeAllChoresModal}>Close</button>
-          </div>
-        </div>
-      </div>
     `;
+
+    const footer = html`
+      <button class="submit-btn" @click=${this._closeAllChoresModal}>Close</button>
+    `;
+
+    return this._renderModalShell(
+      "all-chores-title",
+      html`All Active Chores (${allChores.length})`,
+      this._closeAllChoresModal,
+      body,
+      {
+        contentClass: "large-modal",
+        footer,
+        onBodyClick: this._handleContentClick,
+      }
+    );
   }
 
   _getRoomName(roomId, rooms = null) {
@@ -3457,7 +3521,7 @@ class SimpleChoresCard extends LitElement {
     this.requestUpdate();
 
     // Force update the select elements after modal is shown
-    setTimeout(() => {
+    this._setTimeout(() => {
       const roomSelect = this.shadowRoot?.querySelector('#edit-chore-room');
       const assignSelect = this.shadowRoot?.querySelector('#edit-chore-assigned-to');
 
@@ -3491,32 +3555,6 @@ class SimpleChoresCard extends LitElement {
     await this._snoozeChore(choreId);
   }
 
-  _openAllChoresModal() {
-    this._allChoresRoomFilter = "all";
-    this._showAllChoresModal = true;
-  }
-
-  _closeAllChoresModal() {
-    this._showAllChoresModal = false;
-  }
-
-  _getAllChores() {
-    // Use the enhanced total_chores sensor which now includes all chore data
-    const totalChoresSensor = this.hass.states[SimpleChoresCard.SENSORS.TOTAL];
-
-    if (totalChoresSensor && totalChoresSensor.attributes && totalChoresSensor.attributes.chores) {
-      return totalChoresSensor.attributes.chores;
-    }
-
-    // Fallback: try the due chores if the sensor isn't available yet
-    const dueToday = this._getDueChores("today");
-    const dueThisWeek = this._getDueChores("week");
-
-    const fallbackChores = [...dueToday, ...dueThisWeek];
-
-    return fallbackChores;
-  }
-
   _openCompleteChoreModal(chore) {
     // Try to get current user ID from Home Assistant context
     let currentUserId = "";
@@ -3536,12 +3574,13 @@ class SimpleChoresCard extends LitElement {
       choreName: chore.name,
       roomName: roomName,
       completedBy: currentUserId, // Default to current user
-      reassignTo: chore.assigned_to || "" // Keep current assignment by default
+      reassignTo: chore.assigned_to || "", // Keep current assignment by default
+      originalAssignedTo: chore.assigned_to || ""
     };
     this._showCompleteChoreModal = true;
 
     // Focus first select after modal renders
-    setTimeout(() => {
+    this._setTimeout(() => {
       const select = this.shadowRoot.querySelector('#completed-by');
       if (select) select.focus();
     }, this.constructor.constants.MODAL_FOCUS_DELAY);
@@ -3565,13 +3604,14 @@ class SimpleChoresCard extends LitElement {
       choreName: chore.name,
       roomName: roomName,
       completedBy: currentUserId,
-      reassignTo: chore.assigned_to || ""
+      reassignTo: chore.assigned_to || "",
+      originalAssignedTo: chore.assigned_to || ""
     };
     this._showAllChoresModal = false;
     this._showCompleteChoreModal = true;
 
     // Focus first select after modal renders
-    setTimeout(() => {
+    this._setTimeout(() => {
       const select = this.shadowRoot.querySelector('#completed-by');
       if (select) select.focus();
     }, this.constructor.constants.MODAL_FOCUS_DELAY);
@@ -3682,10 +3722,10 @@ class SimpleChoresCard extends LitElement {
         serviceData.next_due = choreData.dueDate.trim();
       }
 
-      // Add assigned_to if provided
-      if (choreData.assignedTo?.trim()) {
-        serviceData.assigned_to = choreData.assignedTo.trim();
-      }
+      // Always include assigned_to: a non-empty value assigns, an empty
+      // string explicitly clears the assignment (omitting it would leave
+      // the previous assignment unchanged on the backend).
+      serviceData.assigned_to = choreData.assignedTo?.trim() || "";
 
       // Add recurrence fields
       serviceData.recurrence_type = choreData.recurrenceType || 'interval';
@@ -3753,12 +3793,13 @@ class SimpleChoresCard extends LitElement {
 
       await this.hass.callService("simple_chores", "complete_chore", serviceData);
 
-      // If reassignment is requested AND the value has changed, update the chore assignment
-      // Only update if reassignTo has an actual value (not empty string)
-      if (completionData.reassignTo !== undefined && completionData.reassignTo !== "") {
+      // If the assignment selection changed, update the chore assignment.
+      // An empty string explicitly clears the assignment on the backend.
+      if (completionData.reassignTo !== undefined &&
+          completionData.reassignTo !== completionData.originalAssignedTo) {
         const reassignData = {
           chore_id: completionData.choreId,
-          assigned_to: completionData.reassignTo
+          assigned_to: completionData.reassignTo || ""
         };
         await this.hass.callService("simple_chores", "update_chore", reassignData);
       }
@@ -3843,14 +3884,9 @@ class SimpleChoresCard extends LitElement {
   }
 
   _calculateCompletionsOverTime(history) {
-    const periods = {
-      '7d': { days: 7, groupBy: 'day', labels: 7 },
-      '4w': { days: 28, groupBy: 'week', labels: 4 },
-      '3m': { days: 90, groupBy: 'month', labels: 3 },
-      '1y': { days: 365, groupBy: 'month', labels: 12 }
-    };
+    const { STATS_PERIODS, STATS_DEFAULT_PERIOD } = this.constructor.constants;
 
-    const config = periods[this._statsTimePeriod] || periods['4w'];
+    const config = STATS_PERIODS[this._statsTimePeriod] || STATS_PERIODS[STATS_DEFAULT_PERIOD];
     const now = new Date();
     const cutoffDate = new Date(now);
     cutoffDate.setDate(cutoffDate.getDate() - config.days);
@@ -4019,16 +4055,7 @@ class SimpleChoresCard extends LitElement {
 
     const history = this._historyData || [];
 
-    return html`
-      <div class="modal-overlay" @click=${this._closeHistoryModal}>
-        <div class="modal-content large-modal" role="dialog" aria-modal="true" aria-labelledby="history-title" @click=${(e) => e.stopPropagation()}>
-          <div class="modal-header">
-            <h3 id="history-title">📊 Completion History (${history.length})</h3>
-            <button class="close-btn" @click=${this._closeHistoryModal} aria-label="Close dialog">
-              <ha-icon icon="mdi:close"></ha-icon>
-            </button>
-          </div>
-          <div class="modal-body">
+    const body = html`
             ${history.length === 0 ? html`
               <div class="no-history">
                 <p>No completion history found.</p>
@@ -4045,7 +4072,7 @@ class SimpleChoresCard extends LitElement {
                     <div class="history-item">
                       <div class="history-info">
                         <span class="chore-name">${entry.chore_name}</span>
-                        <span class="completed-by">by ${entry.completed_by_name}</span>
+                        <span class="completed-by">by ${entry.completed_by_name || entry.completed_by || 'Unknown'}</span>
                       </div>
                       <div class="completion-details">
                         <span class="completion-date">${formattedDate}</span>
@@ -4056,13 +4083,19 @@ class SimpleChoresCard extends LitElement {
                 })}
               </div>
             `}
-          </div>
-          <div class="modal-footer">
-            <button class="cancel-btn" @click=${this._closeHistoryModal}>Close</button>
-          </div>
-        </div>
-      </div>
     `;
+
+    const footer = html`
+      <button class="cancel-btn" @click=${this._closeHistoryModal}>Close</button>
+    `;
+
+    return this._renderModalShell(
+      "history-title",
+      html`📊 Completion History (${history.length})`,
+      this._closeHistoryModal,
+      body,
+      { contentClass: "large-modal", footer }
+    );
   }
 
   _renderCompleteChoreModal() {
@@ -4072,16 +4105,7 @@ class SimpleChoresCard extends LitElement {
 
     const users = this._getUsers();
 
-    return html`
-      <div class="modal-overlay" @click=${this._closeCompleteChoreModal}>
-        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="complete-chore-title" @click=${(e) => e.stopPropagation()}>
-          <div class="modal-header">
-            <h3 id="complete-chore-title">✓ Complete Chore</h3>
-            <button class="close-btn" @click=${this._closeCompleteChoreModal} aria-label="Close dialog">
-              <ha-icon icon="mdi:close"></ha-icon>
-            </button>
-          </div>
-          <div class="modal-body">
+    const body = html`
             <div class="completion-info">
               <h4>📋 ${this._formData.completion.choreName}</h4>
               ${this._formData.completion.roomName ? html`
@@ -4120,20 +4144,20 @@ class SimpleChoresCard extends LitElement {
               </select>
               <small>Leave as "No specific assignment" or choose someone to assign this chore to for next time</small>
             </div>
-          </div>
-          <div class="modal-footer">
-            <button class="cancel-btn" @click=${this._closeCompleteChoreModal} ?disabled=${this._isLoading}>Cancel</button>
-            <button
-              class="submit-btn ${this._isLoading ? 'loading' : ''}"
-              @click=${this._submitCompleteChore}
-              ?disabled=${!this._formData.completion.completedBy?.trim() || this._isLoading}>
-              ${this._isLoading ? html`<span class="spinner"></span>` : ''}
-              ✓ Mark Complete
-            </button>
-          </div>
-        </div>
-      </div>
     `;
+
+    const footer = html`
+      <button class="cancel-btn" @click=${this._closeCompleteChoreModal} ?disabled=${this._isLoading}>Cancel</button>
+      <button
+        class="submit-btn ${this._isLoading ? 'loading' : ''}"
+        @click=${this._submitCompleteChore}
+        ?disabled=${!this._formData.completion.completedBy?.trim() || this._isLoading}>
+        ${this._isLoading ? html`<span class="spinner"></span>` : ''}
+        ✓ Mark Complete
+      </button>
+    `;
+
+    return this._renderModalShell("complete-chore-title", "✓ Complete Chore", this._closeCompleteChoreModal, body, { footer });
   }
 
   async _skipChore(choreId) {
@@ -4231,6 +4255,9 @@ class SimpleChoresCard extends LitElement {
       box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     `;
     document.body.appendChild(toast);
+    // Intentionally NOT tracked in _pendingTimeouts: the toast element lives
+    // on document.body and outlives this card, so its removal timer must
+    // still fire even if the card is disconnected.
     setTimeout(() => {
       if (toast.parentNode) {
         toast.parentNode.removeChild(toast);

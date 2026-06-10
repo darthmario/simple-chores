@@ -6,8 +6,6 @@ from __future__ import annotations
 
 from datetime import date
 
-import pytest
-
 from custom_components.simple_chores.recurrence import (
     calculate_next_anchored_monthly,
     calculate_next_anchored_weekly,

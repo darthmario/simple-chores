@@ -11,9 +11,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, MAX_CALENDAR_EVENTS
+from .const import DOMAIN, FREQUENCY_ONCE, MAX_CALENDAR_EVENTS
 from .coordinator import SimpleChoresCoordinator
+from .entity import get_device_info
 from .recurrence import calculate_next_due_for_chore
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,6 +43,7 @@ class SimpleChoresCalendar(CoordinatorEntity[SimpleChoresCoordinator], CalendarE
         self._attr_unique_id = f"{entry.entry_id}_calendar"
         self._attr_name = "Simple Chores"
         self._attr_icon = "mdi:calendar-check"
+        self._attr_device_info = get_device_info(entry)
 
     @property
     def event(self) -> CalendarEvent | None:
@@ -52,7 +55,7 @@ class SimpleChoresCalendar(CoordinatorEntity[SimpleChoresCoordinator], CalendarE
         due_today = self.coordinator.data.get("due_today", [])
         if due_today:
             chore = due_today[0]
-            today = date.today()
+            today = dt_util.now().date()
             return CalendarEvent(
                 start=today,
                 end=today + timedelta(days=1),
@@ -127,7 +130,7 @@ class SimpleChoresCalendar(CoordinatorEntity[SimpleChoresCoordinator], CalendarE
             return []
 
         # One-off chores only appear on their due date
-        if frequency == "once":
+        if frequency == FREQUENCY_ONCE:
             if start <= current_due <= end:
                 events.append(
                     CalendarEvent(

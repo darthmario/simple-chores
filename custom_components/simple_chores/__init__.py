@@ -72,6 +72,24 @@ PLATFORMS: list[Platform] = [
     Platform.CALENDAR,
 ]
 
+ALL_SERVICES: tuple[str, ...] = (
+    SERVICE_ADD_ROOM,
+    SERVICE_REMOVE_ROOM,
+    SERVICE_UPDATE_ROOM,
+    SERVICE_ADD_USER,
+    SERVICE_REMOVE_USER,
+    SERVICE_UPDATE_USER,
+    SERVICE_ADD_CHORE,
+    SERVICE_REMOVE_CHORE,
+    SERVICE_UPDATE_CHORE,
+    SERVICE_COMPLETE_CHORE,
+    SERVICE_SKIP_CHORE,
+    SERVICE_SNOOZE_CHORE,
+    SERVICE_GET_HISTORY,
+    SERVICE_GET_USER_STATS,
+    SERVICE_SEND_NOTIFICATION,
+)
+
 # Service schemas
 SERVICE_ADD_ROOM_SCHEMA = vol.Schema(
     {
@@ -236,6 +254,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id)
+        # Single-instance integration: remove services with the last entry
+        if not hass.data[DOMAIN]:
+            for service_name in ALL_SERVICES:
+                hass.services.async_remove(DOMAIN, service_name)
 
     return unload_ok
 

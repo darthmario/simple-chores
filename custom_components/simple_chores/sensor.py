@@ -19,6 +19,7 @@ from .const import (
     SENSOR_TOTAL,
 )
 from .coordinator import SimpleChoresCoordinator
+from .entity import get_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -61,6 +62,7 @@ class SimpleChoresBaseSensor(CoordinatorEntity[SimpleChoresCoordinator], SensorE
         self._attr_unique_id = f"{entry.entry_id}_{key}"
         self._attr_name = name
         self._attr_icon = icon
+        self._attr_device_info = get_device_info(entry)
         self._key = key
         self.entity_id = sensor_entity_id
 

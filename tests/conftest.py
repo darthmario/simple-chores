@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sys
 import types
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -16,6 +16,133 @@ sys.modules.setdefault("custom_components", _pkg)
 _sub = types.ModuleType("custom_components.simple_chores")
 _sub.__path__ = ["custom_components/simple_chores"]
 sys.modules.setdefault("custom_components.simple_chores", _sub)
+
+# ---------------------------------------------------------------------------
+# Lightweight Home Assistant stubs
+#
+# The real `homeassistant` package is not installed in this environment.
+# store.py and coordinator.py import a handful of HA modules at import time,
+# so we install minimal stand-ins into sys.modules BEFORE those modules are
+# imported by tests. Everything uses sys.modules.setdefault so a real HA
+# install (or other stubs) would take precedence.
+# ---------------------------------------------------------------------------
+
+# Fixed, timezone-aware "now" so tests are deterministic.
+# June 15, 2024 is a Saturday (matches the date fixtures below).
+FIXED_NOW = datetime(2024, 6, 15, 12, 0, 0, tzinfo=UTC)
+
+
+class StubStore:
+    """Stand-in for homeassistant.helpers.storage.Store."""
+
+    def __init__(self, hass, version, key, **kwargs):
+        self.hass = hass
+        self.version = version
+        self.key = key
+        self.load_result = None
+        self.saved_data = None
+        self.save_calls: list = []
+
+    def __class_getitem__(cls, _item):
+        return cls
+
+    async def async_load(self):
+        return self.load_result
+
+    async def async_save(self, data):
+        self.saved_data = data
+        self.save_calls.append(data)
+
+
+class StubDataUpdateCoordinator:
+    """Stand-in for homeassistant.helpers.update_coordinator.DataUpdateCoordinator."""
+
+    def __init__(self, hass, logger, name=None, update_interval=None, **kwargs):
+        self.hass = hass
+        self.logger = logger
+        self.name = name
+        self.update_interval = update_interval
+        self.data = None
+
+    def __class_getitem__(cls, _item):
+        return cls
+
+    async def async_request_refresh(self):
+        self.data = await self._async_update_data()
+
+    async def async_config_entry_first_refresh(self):
+        self.data = await self._async_update_data()
+
+    def async_update_listeners(self):
+        pass
+
+
+class StubConfigEntry:
+    """Stand-in for homeassistant.config_entries.ConfigEntry."""
+
+    def __init__(self, data=None, options=None, entry_id="test-entry"):
+        self.data = data or {}
+        self.options = options or {}
+        self.entry_id = entry_id
+
+    def __class_getitem__(cls, _item):
+        return cls
+
+
+class StubHomeAssistant:
+    """Stand-in for homeassistant.core.HomeAssistant."""
+
+
+def _area_registry_async_get(hass):
+    """Return the area registry attached to the stub hass."""
+    return hass.area_registry
+
+
+def _make_module(name: str, is_pkg: bool = False) -> types.ModuleType:
+    if name in sys.modules:
+        return sys.modules[name]
+    mod = types.ModuleType(name)
+    if is_pkg:
+        mod.__path__ = []
+    sys.modules[name] = mod
+    return mod
+
+
+_ha = _make_module("homeassistant", is_pkg=True)
+_ha_core = _make_module("homeassistant.core")
+_ha_core.HomeAssistant = getattr(_ha_core, "HomeAssistant", StubHomeAssistant)
+_ha.core = _ha_core
+
+_ha_config_entries = _make_module("homeassistant.config_entries")
+_ha_config_entries.ConfigEntry = getattr(_ha_config_entries, "ConfigEntry", StubConfigEntry)
+_ha.config_entries = _ha_config_entries
+
+_ha_helpers = _make_module("homeassistant.helpers", is_pkg=True)
+_ha.helpers = _ha_helpers
+
+_ha_storage = _make_module("homeassistant.helpers.storage")
+_ha_storage.Store = getattr(_ha_storage, "Store", StubStore)
+_ha_helpers.storage = _ha_storage
+
+_ha_update_coordinator = _make_module("homeassistant.helpers.update_coordinator")
+_ha_update_coordinator.DataUpdateCoordinator = getattr(
+    _ha_update_coordinator, "DataUpdateCoordinator", StubDataUpdateCoordinator
+)
+_ha_helpers.update_coordinator = _ha_update_coordinator
+
+_ha_area_registry = _make_module("homeassistant.helpers.area_registry")
+if not hasattr(_ha_area_registry, "async_get"):
+    _ha_area_registry.async_get = _area_registry_async_get
+_ha_helpers.area_registry = _ha_area_registry
+
+_ha_util = _make_module("homeassistant.util", is_pkg=True)
+_ha.util = _ha_util
+
+_ha_dt = _make_module("homeassistant.util.dt")
+if not hasattr(_ha_dt, "now"):
+    _ha_dt.FIXED_NOW = FIXED_NOW
+    _ha_dt.now = lambda: FIXED_NOW
+_ha_util.dt = _ha_dt
 
 
 @pytest.fixture

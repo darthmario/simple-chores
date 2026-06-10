@@ -1,4 +1,4 @@
-"""Config flow for Household Tasks integration."""
+"""Config flow for Simple Chores integration."""
 
 from __future__ import annotations
 
@@ -25,8 +25,8 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
-class HouseholdTasksConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Household Tasks."""
+class SimpleChoresConfigFlow(ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for Simple Chores."""
 
     VERSION = 1
 
@@ -69,11 +69,11 @@ class HouseholdTasksConfigFlow(ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
         """Get the options flow for this handler."""
-        return HouseholdTasksOptionsFlow(config_entry)
+        return SimpleChoresOptionsFlow(config_entry)
 
 
-class HouseholdTasksOptionsFlow(OptionsFlow):
-    """Handle options flow for Household Tasks."""
+class SimpleChoresOptionsFlow(OptionsFlow):
+    """Handle options flow for Simple Chores."""
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""

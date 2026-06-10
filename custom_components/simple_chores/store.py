@@ -1,4 +1,4 @@
-"""Data storage for the Household Tasks integration."""
+"""Data storage for the Simple Chores integration."""
 
 from __future__ import annotations
 
@@ -6,17 +6,28 @@ import asyncio
 import contextlib
 import logging
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.helpers.storage import Store
+from homeassistant.util import dt as dt_util
 
 from .const import (
+    ANCHOR_DAY_OF_MONTH,
     ANCHOR_TYPES,
+    ANCHOR_WEEK_PATTERN,
     FREQUENCIES,
+    FREQUENCY_BIANNUAL,
+    FREQUENCY_BIMONTHLY,
+    FREQUENCY_BIWEEKLY,
+    FREQUENCY_MONTHLY,
+    FREQUENCY_QUARTERLY,
+    FREQUENCY_WEEKLY,
+    FREQUENCY_YEARLY,
     MAX_CHORE_NAME_LENGTH,
     MAX_HISTORY_ENTRIES,
     MAX_ROOM_NAME_LENGTH,
+    RECURRENCE_ANCHORED,
     RECURRENCE_INTERVAL,
     RECURRENCE_TYPES,
     STORAGE_KEY,
@@ -160,7 +171,7 @@ class SimpleChoresStore:
         room_id = f"custom_{uuid.uuid4().hex[:8]}"
         room = {
             "id": room_id,
-            "name": name,
+            "name": name.strip(),
             "icon": icon or "mdi:home",
             "is_custom": True,
         }
@@ -312,18 +323,19 @@ class SimpleChoresStore:
             raise ValueError(f"Invalid recurrence type: {recurrence_type}. Must be one of: {RECURRENCE_TYPES}")
 
         # Validate anchor fields if anchored recurrence
-        if recurrence_type == "anchored":
+        if recurrence_type == RECURRENCE_ANCHORED:
             self._validate_anchor_fields(
                 frequency, anchor_days_of_week, anchor_type, anchor_day_of_month, anchor_week, anchor_weekday
             )
 
         # Validate interval (default to 1)
-        interval = interval or 1
+        if interval is None:
+            interval = 1
         if interval < 1:
             raise ValueError("Interval must be at least 1")
 
         chore_id = uuid.uuid4().hex[:8]
-        next_due = start_date or date.today()
+        next_due = start_date or dt_util.now().date()
         chore = {
             "id": chore_id,
             "name": name,
@@ -333,7 +345,7 @@ class SimpleChoresStore:
             "last_completed": None,
             "last_completed_by": None,
             "next_due": next_due.isoformat(),
-            "created_at": datetime.now().isoformat(),
+            "created_at": dt_util.now().isoformat(),
             "is_completed": False,
             # Recurrence fields
             "recurrence_type": recurrence_type,
@@ -365,7 +377,7 @@ class SimpleChoresStore:
         anchor_weekday: int | None,
     ) -> None:
         """Validate anchor fields for anchored recurrence."""
-        if frequency == "weekly" or frequency == "biweekly":
+        if frequency in (FREQUENCY_WEEKLY, FREQUENCY_BIWEEKLY):
             # Weekly anchored requires anchor_days_of_week
             if not anchor_days_of_week:
                 raise ValueError("Weekly anchored recurrence requires anchor_days_of_week")
@@ -373,23 +385,23 @@ class SimpleChoresStore:
                 if day not in WEEKDAYS:
                     raise ValueError(f"Invalid day of week: {day}. Must be 0-6 (Sunday-Saturday)")
 
-        elif frequency in ("monthly", "bimonthly", "quarterly", "biannual"):
+        elif frequency in (FREQUENCY_MONTHLY, FREQUENCY_BIMONTHLY, FREQUENCY_QUARTERLY, FREQUENCY_BIANNUAL):
             # Monthly anchored requires anchor_type
             if not anchor_type:
                 raise ValueError("Monthly anchored recurrence requires anchor_type")
             if anchor_type not in ANCHOR_TYPES:
                 raise ValueError(f"Invalid anchor type: {anchor_type}. Must be one of: {ANCHOR_TYPES}")
 
-            if anchor_type == "day_of_month":
+            if anchor_type == ANCHOR_DAY_OF_MONTH:
                 if anchor_day_of_month is None or anchor_day_of_month < 1 or anchor_day_of_month > 31:
                     raise ValueError("anchor_day_of_month must be between 1 and 31")
-            elif anchor_type == "week_pattern":
+            elif anchor_type == ANCHOR_WEEK_PATTERN:
                 if anchor_week not in WEEK_ORDINALS:
                     raise ValueError(f"Invalid anchor_week: {anchor_week}. Must be 1-5 (1st-4th, or 5 for last)")
                 if anchor_weekday not in WEEKDAYS:
                     raise ValueError(f"Invalid anchor_weekday: {anchor_weekday}. Must be 0-6 (Sunday-Saturday)")
 
-        elif frequency == "yearly":
+        elif frequency == FREQUENCY_YEARLY:
             # Yearly anchored - similar to monthly but also needs month specification
             # For now, we'll use the start_date's month as the anchor month
             pass
@@ -428,7 +440,25 @@ class SimpleChoresStore:
         if recurrence_type is not None and recurrence_type not in RECURRENCE_TYPES:
             raise ValueError(f"Invalid recurrence type: {recurrence_type}. Must be one of: {RECURRENCE_TYPES}")
 
+        # Validate interval before any mutation so a failed update can't
+        # leave the chore partially modified
+        if interval is not None and interval < 1:
+            raise ValueError("Interval must be at least 1")
+
         chore = self._data["chores"][chore_id]
+
+        # Validate the effective anchor configuration (provided values merged
+        # over stored ones) before mutating anything
+        effective_recurrence = recurrence_type if recurrence_type is not None else chore.get("recurrence_type")
+        if effective_recurrence == RECURRENCE_ANCHORED:
+            self._validate_anchor_fields(
+                frequency if frequency is not None else chore.get("frequency"),
+                anchor_days_of_week if anchor_days_of_week is not None else chore.get("anchor_days_of_week"),
+                anchor_type if anchor_type is not None else chore.get("anchor_type"),
+                anchor_day_of_month if anchor_day_of_month is not None else chore.get("anchor_day_of_month"),
+                anchor_week if anchor_week is not None else chore.get("anchor_week"),
+                anchor_weekday if anchor_weekday is not None else chore.get("anchor_weekday"),
+            )
 
         if name is not None:
             chore["name"] = name
@@ -439,18 +469,16 @@ class SimpleChoresStore:
         if next_due is not None:
             chore["next_due"] = next_due.isoformat()
 
-        # Ensure assigned_to field exists for backwards compatibility
-        if "assigned_to" not in chore:
+        # Assignment: None (omitted) leaves it unchanged, "" explicitly clears it
+        if assigned_to is not None:
+            chore["assigned_to"] = assigned_to or None
+        elif "assigned_to" not in chore:
             chore["assigned_to"] = None
-        # Update assigned_to field (always set it when updating a chore)
-        chore["assigned_to"] = assigned_to
 
         # Update recurrence fields if provided
         if recurrence_type is not None:
             chore["recurrence_type"] = recurrence_type
         if interval is not None:
-            if interval < 1:
-                raise ValueError("Interval must be at least 1")
             chore["interval"] = interval
         if anchor_days_of_week is not None:
             chore["anchor_days_of_week"] = anchor_days_of_week
@@ -490,7 +518,7 @@ class SimpleChoresStore:
             return None
 
         chore = self._data["chores"][chore_id]
-        now = datetime.now()
+        now = dt_util.now()
 
         # Update chore
         chore["last_completed"] = now.date().isoformat()
