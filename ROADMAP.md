@@ -122,6 +122,31 @@ Medium - Current interval system works for most use cases, but day-anchored is e
 
 ## Completed Features
 
+### Focus View ("chore book")
+An ADHD-friendly third view alongside list and calendar, modelled on the physical
+chore-book binder idea: one task card at a time instead of a list, a time-budget
+filter ("I have 5 minutes"), a shuffle for decision paralysis, optional micro-steps
+with shared server-side progress, a per-chore countdown timer, and confetti plus a
+daily streak for visible reward. Deck layout on phones, board layout on wall
+displays. Added `estimated_minutes` and `steps` to the chore model.
+
+### Websocket Data Layer
+Chore lists and completion history moved out of state attributes onto the
+`simple_chores/chores` and `simple_chores/history` websocket commands, with a
+`revision` digest telling the card when to re-fetch. Due windows are sent as ID
+lists so an overdue chore isn't serialised three times. Combined with the
+statistics work below, `sensor.total_chores` went from 30 KB (and growing with
+every chore and completion) to a flat ~1.9 KB. The focus board and All Chores
+modal also page rather than rendering every chore.
+
+### Server-Side Statistics
+Completion statistics (streak, done-today, per-period buckets, top chores, per-room
+and per-user totals) moved from the Lovelace card into `statistics.py`, and raw
+history moved out of state attributes onto a `simple_chores/history` websocket
+command. Chore payloads are also slimmed of unread and empty fields. This took the
+`sensor.total_chores` attribute from 30 KB to ~7 KB and made it flat with respect to
+history size, clearing Home Assistant's 16 KB recorder limit.
+
 ### Statistics Dashboard
 Expandable statistics dashboard showing completion analytics:
 - Time-based bar chart (7 days, 4 weeks, 3 months, 1 year views)
@@ -143,8 +168,13 @@ These ideas are on the backburner and may or may not be implemented:
 
 - **Chore Templates** - Pre-built chore sets for common scenarios (weekly cleaning routine, seasonal tasks, etc.)
 - **Multi-instance Support** - Different chore lists for different properties/households
-- **Streak Tracking** - Track consecutive days/weeks of completing chores
+- **Streak Tracking** - Weekly/monthly streaks and per-user streaks (the focus view
+  already shows a daily household streak)
+- **Chore Templates with Steps** - Pre-built step lists for common resets
+  (kitchen reset, bathroom reset) to seed the focus view's checklists
+- **Focus Sprint** - Chain several chores back to back under one running timer
+  ("power hour")
 
 ---
 
-*Last updated: 2026-01-17*
+*Last updated: 2026-07-26*

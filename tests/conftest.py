@@ -138,10 +138,25 @@ _ha_helpers.area_registry = _ha_area_registry
 _ha_util = _make_module("homeassistant.util", is_pkg=True)
 _ha.util = _ha_util
 
+def _parse_datetime(value):
+    """Stand-in for homeassistant.util.dt.parse_datetime (None on bad input)."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+
+
 _ha_dt = _make_module("homeassistant.util.dt")
 if not hasattr(_ha_dt, "now"):
     _ha_dt.FIXED_NOW = FIXED_NOW
     _ha_dt.now = lambda: FIXED_NOW
+if not hasattr(_ha_dt, "parse_datetime"):
+    _ha_dt.parse_datetime = _parse_datetime
+if not hasattr(_ha_dt, "as_local"):
+    # Tests pin everything to UTC, so "local" is a no-op here
+    _ha_dt.as_local = lambda value: value
 _ha_util.dt = _ha_dt
 
 

@@ -90,8 +90,9 @@ async def _register_hacs_compatible(hass: HomeAssistant, domain: str, source_fil
         target_dir = hass.config.path(f"www/community/{domain}")
         target_file = os.path.join(target_dir, CARD_FILENAME)
 
-        # Get version for cache busting
-        version = _get_integration_version()
+        # Get version for cache busting. Read in the executor: this opens a
+        # file, and Home Assistant flags blocking I/O on the event loop.
+        version = await hass.async_add_executor_job(_get_integration_version)
         card_url = f"/local/community/{domain}/{CARD_FILENAME}?v={version}"
 
         _LOGGER.debug("Using version %s for cache busting", version)

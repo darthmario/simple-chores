@@ -267,6 +267,23 @@ add_chore:
         number:
           min: 1
           max: 52
+    estimated_minutes:
+      name: Estimated Minutes
+      description: Roughly how long this chore takes. Powers the focus view's time-budget filter ("I have 5 minutes").
+      required: false
+      example: 5
+      selector:
+        number:
+          min: 1
+          max: 480
+          unit_of_measurement: min
+    steps:
+      name: Steps
+      description: Optional micro-steps shown as a checklist in the focus view. Max 12 steps.
+      required: false
+      example: ["Clear the counter", "Rinse and load", "Start it"]
+      selector:
+        object:
 
 remove_chore:
   name: Remove Chore
@@ -437,6 +454,49 @@ update_chore:
         number:
           min: 1
           max: 52
+    estimated_minutes:
+      name: Estimated Minutes
+      description: Roughly how long this chore takes. Pass 0 to clear the estimate; omit to leave unchanged.
+      required: false
+      example: 5
+      selector:
+        number:
+          min: 0
+          max: 480
+          unit_of_measurement: min
+    steps:
+      name: Steps
+      description: Replace the chore's micro-steps. Pass an empty list to clear them; omit to leave unchanged.
+      required: false
+      example: ["Clear the counter", "Rinse and load", "Start it"]
+      selector:
+        object:
+
+toggle_chore_step:
+  name: Toggle Chore Step
+  description: Tick or untick one micro-step on a chore. Progress is shared across every device.
+  fields:
+    chore_id:
+      name: Chore ID
+      description: The ID of the chore.
+      required: true
+      selector:
+        text:
+    step_index:
+      name: Step Index
+      description: Which step to toggle, counting from 0.
+      required: true
+      example: 0
+      selector:
+        number:
+          min: 0
+          max: 11
+    completed:
+      name: Completed
+      description: Set the step explicitly instead of flipping it.
+      required: false
+      selector:
+        boolean:
 
 complete_chore:
   name: Complete Chore

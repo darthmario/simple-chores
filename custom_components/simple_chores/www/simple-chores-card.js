@@ -5,7 +5,7 @@
 
 // Card version - update this when releasing new versions
 // This should match the version in manifest.json
-const CARD_VERSION = "1.6.0";
+const CARD_VERSION = "1.9.0";
 
 // Try the most direct approach used by working HA cards
 let LitElement, html, css;
@@ -101,7 +101,20 @@ class SimpleChoresCard extends LitElement {
       // Statistics dashboard
       _showExpandedStats: { type: Boolean },
       _statsTimePeriod: { type: String },
-      _statsCache: { type: Object },
+      // Focus view ("chore book")
+      _focusMode: { type: String },
+      _userOverrodeFocusMode: { type: Boolean },
+      _timeBudget: { type: Number },
+      _focusOrder: { type: Array },
+      _focusIndex: { type: Number },
+      _focusDismissed: { type: Object },
+      _focusGetAhead: { type: Boolean },
+      _focusTimer: { type: Object },
+      _celebration: { type: Object },
+      _expandedSteps: { type: Object },
+      _stepOptimistic: { type: Object },
+      _estimatePromptFor: { type: String },
+      _choresData: { type: Object },
     };
   }
 
@@ -128,6 +141,20 @@ class SimpleChoresCard extends LitElement {
       MAX_FUTURE_OCCURRENCES: 12,
       // How many days ahead to search for an anchored weekly occurrence (8 weeks)
       ANCHORED_SEARCH_DAYS: 56,
+
+      // Cards rendered at once in the focus board before a "show more"
+      FOCUS_BOARD_LIMIT: 24,
+
+      // Below this card width (px), the focus view shows one card at a time
+      // (deck) instead of a grid (board)
+      FOCUS_BOARD_WIDTH_THRESHOLD: 500,
+      // Time budgets offered by the focus view chips, in minutes
+      TIME_BUDGETS: [5, 15, 30],
+      // Minute values offered when capturing a missing estimate inline
+      QUICK_ESTIMATES: [2, 5, 10, 15, 30, 60],
+      // How long the confetti burst stays on screen
+      CELEBRATION_MS: 1800,
+      CELEBRATION_PARTICLES: 16,
 
       // Statistics dashboard time periods
       STATS_DEFAULT_PERIOD: '4w',
@@ -178,7 +205,9 @@ class SimpleChoresCard extends LitElement {
     // Chore display limits for progressive rendering
     this._choreLimits = {
       dueToday: this.constructor.constants.DEFAULT_CHORE_LIMIT,
-      dueNext7Days: this.constructor.constants.DEFAULT_CHORE_LIMIT
+      dueNext7Days: this.constructor.constants.DEFAULT_CHORE_LIMIT,
+      allChores: this.constructor.constants.DEFAULT_CHORE_LIMIT,
+      focusBoard: this.constructor.constants.FOCUS_BOARD_LIMIT
     };
     // Loading state
     this._isLoading = false;
@@ -190,7 +219,27 @@ class SimpleChoresCard extends LitElement {
     // Statistics dashboard
     this._showExpandedStats = false;
     this._statsTimePeriod = this.constructor.constants.STATS_DEFAULT_PERIOD;
-    this._statsCache = { data: null, lastUpdate: 0, ttl: 60000 };  // 1 minute cache
+    // Focus view ("chore book"): deck on phones, board on wall displays
+    this._focusMode = 'deck';
+    this._userOverrodeFocusMode = false;
+    this._timeBudget = null;          // null = any duration
+    this._focusOrder = null;          // array of chore ids after a shuffle
+    this._focusIndex = 0;
+    this._focusDismissed = {};        // chore ids acted on but not yet gone from sensors
+    this._focusGetAhead = false;      // pulling from the next 7 days once today is clear
+    this._focusTimer = null;
+    this._timerInterval = null;
+    this._celebration = null;
+    this._expandedSteps = {};
+    this._stepOptimistic = {};        // "choreId:index" -> expected boolean
+    this._estimatePromptFor = null;
+    this._touchStart = null;          // deck swipe origin (not reactive)
+    // Raw history is fetched over the websocket, not read from an attribute
+    this._historyFetchedFor = null;   // total_completions the cache was built for
+    this._historyFetchInFlight = false;
+    // Chores arrive over the websocket too - see _fetchChores
+    this._choresData = this.constructor.emptyChoresData();
+    this._choresFetchInFlight = false;
     // Performance caching
     this._cache = {
       rooms: { data: null, lastUpdate: 0, ttl: this.constructor.constants.ROOM_CACHE_TTL },
@@ -272,6 +321,8 @@ class SimpleChoresCard extends LitElement {
       clearTimeout(id);
     }
     this._pendingTimeouts.clear();
+    // Stop the focus-view countdown
+    this._clearTimerInterval();
   }
 
   /**
@@ -325,6 +376,8 @@ class SimpleChoresCard extends LitElement {
   firstUpdated() {
     // Set up ResizeObserver for responsive calendar view
     this._setupResizeObserver();
+    // Nothing renders until the chore list arrives
+    this._fetchChores();
   }
 
   _setupResizeObserver() {
@@ -340,10 +393,27 @@ class SimpleChoresCard extends LitElement {
         if (this._calendarMode !== newMode && !this._userOverrodeCalendarMode) {
           this._calendarMode = newMode;
         }
+        // Same idea for the focus view: one card at a time on a phone,
+        // a grid of big cards on the wall display
+        const newFocusMode =
+          width < this.constructor.constants.FOCUS_BOARD_WIDTH_THRESHOLD ? 'deck' : 'board';
+        if (this._focusMode !== newFocusMode && !this._userOverrodeFocusMode) {
+          this._focusMode = newFocusMode;
+        }
       }
     });
 
     this._resizeObserver.observe(this);
+  }
+
+  /** @returns {boolean} Whether any modal is currently open */
+  _anyModalOpen() {
+    return Boolean(
+      this._showAddRoomModal || this._showManageRoomsModal || this._showAddUserModal ||
+      this._showManageUsersModal || this._showEditUserModal || this._showAddChoreModal ||
+      this._showEditChoreModal || this._showAllChoresModal || this._showHistoryModal ||
+      this._showCompleteChoreModal
+    );
   }
 
   _handleKeydown(e) {
@@ -375,6 +445,23 @@ class SimpleChoresCard extends LitElement {
         this._closeHistoryModal();
       } else if (this._showCompleteChoreModal) {
         this._closeCompleteChoreModal();
+      }
+      return;
+    }
+
+    // Arrow keys step through the focus deck, as long as nothing else has focus
+    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
+        this._currentView === 'focus' &&
+        this._focusMode === 'deck' &&
+        !this._anyModalOpen()) {
+      const target = e.target;
+      if (target && ['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) return;
+      e.preventDefault();
+      if (e.key === 'ArrowLeft') {
+        this._focusPrev();
+      } else {
+        const queue = this._getFocusQueue();
+        if (this._focusIndex < queue.length - 1) this._focusNext();
       }
       return;
     }
@@ -428,7 +515,9 @@ class SimpleChoresCard extends LitElement {
         anchorDayOfMonth: 1,
         anchorWeek: 1,
         anchorWeekday: 1,
-        interval: 1
+        interval: 1,
+        estimatedMinutes: "",
+        steps: []
       },
       completion: {
         choreId: "",
@@ -507,7 +596,9 @@ class SimpleChoresCard extends LitElement {
         room: "",
         frequency: "daily",
         dueDate: "",
-        assignedTo: ""
+        assignedTo: "",
+        estimatedMinutes: "",
+        steps: []
       };
     } else if (formType === 'completion') {
       this._formData.completion = {
@@ -602,12 +693,18 @@ class SimpleChoresCard extends LitElement {
       title: "Simple Chores",
       hide_stats: false,
       compact_mode: false,
+      focus_layout: "auto",
       ...config
     };
 
     // Apply config to initial state if not already set
-    if (this._currentView === "list" && this.config.default_view === "calendar") {
-      this._currentView = "calendar";
+    if (this._currentView === "list" && ["calendar", "focus"].includes(this.config.default_view)) {
+      this._currentView = this.config.default_view;
+    }
+    // Pin the focus layout when the dashboard asks for a specific one
+    if (["deck", "board"].includes(this.config.focus_layout)) {
+      this._focusMode = this.config.focus_layout;
+      this._userOverrodeFocusMode = true;
     }
     if (!this._showMyChoresOnly && this.config.my_chores_default) {
       this._showMyChoresOnly = true;
@@ -767,9 +864,16 @@ class SimpleChoresCard extends LitElement {
             <!-- Icon buttons -->
             <div class="header-icon-buttons">
               <button
+                class="icon-btn ${this._currentView === 'focus' ? 'active' : ''}"
+                @click=${() => this._setView('focus')}
+                title="${this._currentView === 'focus' ? 'Back to List View' : 'Switch to Focus View'}"
+              >
+                <ha-icon icon="mdi:cards-outline"></ha-icon>
+              </button>
+              <button
                 class="icon-btn ${this._currentView === 'calendar' ? 'active' : ''}"
-                @click=${this._toggleView}
-                title="${this._currentView === 'list' ? 'Switch to Calendar View' : 'Switch to List View'}"
+                @click=${() => this._setView('calendar')}
+                title="${this._currentView === 'calendar' ? 'Back to List View' : 'Switch to Calendar View'}"
               >
                 <ha-icon icon="mdi:calendar"></ha-icon>
               </button>
@@ -781,13 +885,14 @@ class SimpleChoresCard extends LitElement {
         </div>
 
         <div class="card-content" @click=${this._handleContentClick}>
-          ${this._currentView === 'list' ? html`
+          ${!this._choresData.loaded ? this._renderLoading() : ''}
+          ${this._choresData.loaded && this._currentView === 'focus' ? this._renderFocusView() : ''}
+          ${this._choresData.loaded && this._currentView === 'calendar' ? this._renderCalendarView() : ''}
+          ${this._choresData.loaded && this._currentView === 'list' ? html`
             ${!this.config.hide_stats ? this._renderStats() : ''}
             ${this._renderChoreList(dueToday, "Due Today")}
             ${this._renderChoreList(dueThisWeek, "Due in Next 7 Days")}
-          ` : html`
-            ${this._renderCalendarView()}
-          `}
+          ` : ''}
         </div>
 
         ${this._renderAddRoomModal()}
@@ -801,6 +906,15 @@ class SimpleChoresCard extends LitElement {
         ${this._renderHistoryModal()}
         ${this._renderCompleteChoreModal()}
       </ha-card>
+    `;
+  }
+
+  _renderLoading() {
+    return html`
+      <div class="chores-loading">
+        <span class="spinner"></span>
+        <span>Loading chores...</span>
+      </div>
     `;
   }
 
@@ -916,14 +1030,12 @@ class SimpleChoresCard extends LitElement {
   }
 
   _renderExpandedStats() {
-    const history = this._getCompletionHistorySync();
+    const stats = this._calculateStatsData();
 
     // Handle empty state
-    if (history.length === 0) {
+    if (stats.totalCompletions === 0) {
       return this._renderEmptyStats();
     }
-
-    const stats = this._calculateStatsData();
 
     return html`
       <div class="stats-dashboard">
@@ -1894,43 +2006,84 @@ class SimpleChoresCard extends LitElement {
     };
   }
 
-  _getDueChores(period) {
-    if (!this.hass) return [];
+  /** The shape _choresData holds before anything has loaded. */
+  static emptyChoresData() {
+    return {
+      revision: null,
+      loaded: false,
+      chores: [],
+      byId: new Map(),
+      dueToday: [],
+      dueThisWeek: [],
+      overdue: [],
+    };
+  }
 
-    const sensorName = period === "today" ?
-      SimpleChoresCard.SENSORS.DUE_TODAY :
-      SimpleChoresCard.SENSORS.DUE_NEXT_7_DAYS;
+  /**
+   * Fetch the chore list over the websocket.
+   *
+   * Chores are no longer published as state attributes: the list is pushed to
+   * every connected client on every update, and it outgrew Home Assistant's
+   * 16 KB attribute limit at around 60 chores. The sensor carries a `revision`
+   * digest instead, and we re-fetch whenever it moves.
+   * @param {boolean} force - Fetch even when the revision looks current
+   */
+  async _fetchChores(force = false) {
+    if (!this.hass) return;
 
-    const chores = this.hass.states[sensorName]?.attributes?.chores || [];
+    const revision = this.hass.states?.[SimpleChoresCard.SENSORS.TOTAL]?.attributes?.revision ?? null;
+    if (!force && this._choresData.loaded && this._choresData.revision === revision) {
+      return;
+    }
+    if (this._choresFetchInFlight) return;
 
-    // Debug log to see what we're getting
-
-    // Process chores to ensure proper date formatting and properties
-    const processedChores = chores.map(chore => {
-      // Ensure we have the right property names
-      const processedChore = {
-        ...chore,
-        id: chore.id || chore.chore_id,
-        name: chore.name || chore.chore_name,
-        room_id: chore.room_id || chore.room,
-        room_name: chore.room_name || chore.room, // Use room as fallback for room_name
-        next_due: chore.next_due || chore.due_date || chore.date || this._toLocalDateStr(new Date()),
-        due_date: chore.next_due || chore.due_date || chore.date || this._toLocalDateStr(new Date()),
-        frequency: chore.frequency
+    this._choresFetchInFlight = true;
+    try {
+      const result = await this.hass.callWS({ type: "simple_chores/chores" });
+      const chores = (result?.chores || []).map(chore => this._normalizeChore(chore));
+      this._choresData = {
+        revision: result?.revision ?? revision,
+        loaded: true,
+        chores,
+        byId: new Map(chores.map(chore => [chore.id, chore])),
+        // Sent as ID lists: an overdue chore is in three of these, and
+        // repeating the whole record three times is what caused the problem
+        dueToday: result?.due_today || [],
+        dueThisWeek: result?.due_this_week || [],
+        overdue: result?.overdue || [],
       };
+    } catch (error) {
+      console.error("Simple Chores Card: Failed to fetch chores:", error);
+      // Keep whatever we already had rather than blanking the card, but stop
+      // showing the loading state so the user sees something actionable
+      this._choresData = { ...this._choresData, loaded: true };
+    } finally {
+      this._choresFetchInFlight = false;
+    }
+  }
 
-      // If this chore is in "due today", and we don't have a specific date, assume today
-      if (sensorName === SimpleChoresCard.SENSORS.DUE_TODAY && !processedChore.next_due) {
-        processedChore.next_due = this._toLocalDateStr(new Date());
-        processedChore.due_date = this._toLocalDateStr(new Date());
-      }
+  /**
+   * Fill in the aliases and defaults the render paths expect. The wire format
+   * omits empty fields, so this is where they come back as usable values.
+   */
+  _normalizeChore(chore) {
+    const nextDue = chore.next_due || chore.due_date || this._toLocalDateStr(new Date());
+    return {
+      ...chore,
+      next_due: nextDue,
+      due_date: nextDue,
+      days_overdue: Number(chore.days_overdue) || 0,
+    };
+  }
 
-      // Debug log for each chore
-
-      return processedChore;
-    });
-
-    return processedChores;
+  /**
+   * Chores in a due window, resolved from the ID lists the backend sent.
+   * @param {string} period - 'today' (includes overdue) or 'week'
+   */
+  _getDueChores(period) {
+    const { byId, dueToday, dueThisWeek } = this._choresData;
+    const ids = period === "today" ? dueToday : dueThisWeek;
+    return ids.map(id => byId.get(id)).filter(Boolean);
   }
 
   /**
@@ -2135,6 +2288,20 @@ class SimpleChoresCard extends LitElement {
     this._currentView = this._currentView === 'list' ? 'calendar' : 'list';
   }
 
+  /**
+   * Switch to a view, or back to the list if it's already showing.
+   * @param {string} view - 'list', 'calendar' or 'focus'
+   */
+  _setView(view) {
+    const next = this._currentView === view ? 'list' : view;
+    if (next !== 'focus') {
+      // Don't leave a countdown running for a card nobody is looking at
+      this._stopTimer();
+    }
+    this._currentView = next;
+    this._closeAllDropdowns();
+  }
+
   _filterChoresByUser(chores) {
     // 'all' means show all chores (no filter)
     if (this._selectedAssignee === 'all') return chores;
@@ -2148,6 +2315,827 @@ class SimpleChoresCard extends LitElement {
 
     // Otherwise filter by specific user ID
     return chores.filter(chore => chore.assigned_to === this._selectedAssignee);
+  }
+
+  // ============================================
+  // FOCUS VIEW ("CHORE BOOK")
+  //
+  // One thing on screen at a time instead of a list, filtered by how long
+  // you have, with a shuffle for when picking is the hard part. Deck layout
+  // on phones, board layout on a wall display.
+  // ============================================
+
+  /**
+   * Drop optimistic focus-view state once the sensors have caught up.
+   * Runs after render so we never mutate state mid-render.
+   */
+  updated(changedProps) {
+    if (!this.hass) return;
+
+    // No-ops unless the revision digest says our copy is stale
+    this._fetchChores();
+
+    // The calendar and history modal are the only things needing raw entries.
+    // _fetchHistory no-ops unless the completion count has moved on.
+    if (this._currentView === 'calendar' || this._showHistoryModal) {
+      this._fetchHistory();
+    }
+
+    if (!changedProps.has('hass')) return;
+
+    // A chore stays "dismissed" only while the sensor still reports it as due
+    const dismissedIds = Object.keys(this._focusDismissed);
+    if (dismissedIds.length) {
+      const live = new Set(this._getRawFocusChores().map(c => c.id));
+      const stillDismissed = {};
+      for (const id of dismissedIds) {
+        if (live.has(id)) stillDismissed[id] = true;
+      }
+      if (Object.keys(stillDismissed).length !== dismissedIds.length) {
+        this._focusDismissed = stillDismissed;
+      }
+    }
+
+    // A step tick stays optimistic only until the backend reports the same value
+    const optimisticKeys = Object.keys(this._stepOptimistic);
+    if (optimisticKeys.length) {
+      const byId = new Map(this._getRawFocusChores().map(c => [c.id, c]));
+      const pending = {};
+      for (const key of optimisticKeys) {
+        const separator = key.lastIndexOf(':');
+        const choreId = key.slice(0, separator);
+        const index = Number(key.slice(separator + 1));
+        const chore = byId.get(choreId);
+        // Keep the optimistic value until the real one agrees (or the chore is gone)
+        if (chore && (chore.step_progress || []).includes(index) !== this._stepOptimistic[key]) {
+          pending[key] = this._stepOptimistic[key];
+        }
+      }
+      if (Object.keys(pending).length !== optimisticKeys.length) {
+        this._stepOptimistic = pending;
+      }
+    }
+  }
+
+  /**
+   * Chores eligible for the focus view before any filtering.
+   * "Due today" already includes overdue chores (the coordinator adds them to
+   * both), so it's the whole of what needs doing now.
+   * @returns {Array<Object>}
+   */
+  _getRawFocusChores() {
+    const source = this._focusGetAhead
+      ? [...this._getDueChores('today'), ...this._getDueChores('week')]
+      : this._getDueChores('today');
+
+    const seen = new Set();
+    const unique = [];
+    for (const chore of source) {
+      if (!chore || !chore.id || seen.has(chore.id)) continue;
+      seen.add(chore.id);
+      unique.push(chore);
+    }
+    return unique;
+  }
+
+  /**
+   * Focus chores after the header's room/assignee filters and any local
+   * dismissals, but before the time budget.
+   * @returns {Array<Object>}
+   */
+  _getFocusPool() {
+    const byRoom = this._filterChoresByRoom(this._getRawFocusChores());
+    const byUser = this._filterChoresByUser(byRoom);
+    return byUser.filter(chore => !this._focusDismissed[chore.id]);
+  }
+
+  /**
+   * The ordered list the deck steps through / the board lays out.
+   * @returns {Array<Object>}
+   */
+  _getFocusQueue() {
+    const sorted = this._sortFocusChores(this._filterChoresByTimeBudget(this._getFocusPool()));
+    if (!this._focusOrder) {
+      return sorted;
+    }
+    // Preserve a shuffle; anything new since the shuffle keeps its natural
+    // place at the end rather than landing in raw sensor order
+    const rank = new Map(this._focusOrder.map((id, index) => [id, index]));
+    return [...sorted].sort((a, b) => {
+      const ra = rank.has(a.id) ? rank.get(a.id) : Number.MAX_SAFE_INTEGER;
+      const rb = rank.has(b.id) ? rank.get(b.id) : Number.MAX_SAFE_INTEGER;
+      return ra - rb;
+    });
+  }
+
+  /**
+   * Most overdue first, then quickest first so a short window surfaces wins.
+   * @param {Array<Object>} chores
+   * @returns {Array<Object>}
+   */
+  _sortFocusChores(chores) {
+    return [...chores].sort((a, b) => {
+      const overdueA = Number(a.days_overdue) || 0;
+      const overdueB = Number(b.days_overdue) || 0;
+      if (overdueA !== overdueB) return overdueB - overdueA;
+
+      const minutesA = this._choreMinutes(a);
+      const minutesB = this._choreMinutes(b);
+      if (minutesA !== minutesB) {
+        return (minutesA ?? Number.MAX_SAFE_INTEGER) - (minutesB ?? Number.MAX_SAFE_INTEGER);
+      }
+      return String(a.name || '').localeCompare(String(b.name || ''));
+    });
+  }
+
+  /**
+   * Chores with no estimate are excluded from a budget on purpose - we can't
+   * promise an unmeasured chore fits in five minutes.
+   */
+  _filterChoresByTimeBudget(chores) {
+    if (!this._timeBudget) return chores;
+    return chores.filter(chore => {
+      const minutes = this._choreMinutes(chore);
+      return minutes !== null && minutes <= this._timeBudget;
+    });
+  }
+
+  /**
+   * @returns {number|null} Estimated minutes, or null when unset/invalid
+   */
+  _choreMinutes(chore) {
+    const minutes = Number(chore?.estimated_minutes);
+    return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
+  }
+
+  _formatMinutes(minutes) {
+    if (minutes < 60) return `${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    const rest = minutes % 60;
+    return rest === 0 ? `${hours} hr` : `${hours} hr ${rest} min`;
+  }
+
+  _formatClock(totalSeconds) {
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = totalSeconds % 60;
+    return `${mins}:${String(secs).padStart(2, '0')}`;
+  }
+
+  /** Completions recorded today, used for the "x of y done" ring. */
+  _getDoneTodayCount() {
+    return this._getStats()?.done_today || 0;
+  }
+
+  /**
+   * Consecutive days ending today with at least one completion, computed by
+   * the backend (see statistics.py).
+   * @returns {number}
+   */
+  _getStreak() {
+    return this._getStats()?.streak_days || 0;
+  }
+
+  // --- Focus view controls -------------------------------------------------
+
+  _setTimeBudget(minutes) {
+    this._timeBudget = minutes;
+    this._focusIndex = 0;
+    this._stopTimer();
+  }
+
+  _toggleFocusMode() {
+    this._focusMode = this._focusMode === 'deck' ? 'board' : 'deck';
+    this._userOverrodeFocusMode = true;
+  }
+
+  _focusPrev() {
+    this._focusIndex = Math.max(0, this._focusIndex - 1);
+    this._stopTimer();
+  }
+
+  _focusNext() {
+    this._focusIndex = this._focusIndex + 1;
+    this._stopTimer();
+  }
+
+  _focusStartGetAhead() {
+    this._focusGetAhead = true;
+    this._focusIndex = 0;
+  }
+
+  /** Deal a fresh random order - the answer to "I can't decide what to do". */
+  _focusShuffle() {
+    const queue = this._getFocusQueue();
+    if (queue.length <= 1) return;
+
+    const currentId = queue[this._clampFocusIndex(queue)]?.id;
+    const ids = queue.map(chore => chore.id);
+    for (let i = ids.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+    }
+    // Landing on the card you were already looking at doesn't feel like a shuffle
+    if (ids.length > 1 && ids[0] === currentId) {
+      [ids[0], ids[1]] = [ids[1], ids[0]];
+    }
+
+    this._focusOrder = ids;
+    this._focusIndex = 0;
+    this._stopTimer();
+  }
+
+  _clampFocusIndex(queue) {
+    if (queue.length === 0) return 0;
+    return Math.min(Math.max(this._focusIndex, 0), queue.length - 1);
+  }
+
+  _dismissFromFocus(choreId) {
+    this._focusDismissed = { ...this._focusDismissed, [choreId]: true };
+  }
+
+  _restoreToFocus(choreId) {
+    const remaining = { ...this._focusDismissed };
+    delete remaining[choreId];
+    this._focusDismissed = remaining;
+  }
+
+  /**
+   * Run a focus action optimistically: the card leaves immediately and comes
+   * back only if the service call fails.
+   */
+  async _focusAction(chore, service, data, successMessage) {
+    this._stopTimer(chore.id);
+    this._dismissFromFocus(chore.id);
+    try {
+      await this.hass.callService("simple_chores", service, { chore_id: chore.id, ...data });
+      if (successMessage) this._showToast(successMessage);
+    } catch (error) {
+      console.error(`Simple Chores Card: Error calling ${service}:`, error);
+      this._restoreToFocus(chore.id);
+      this._showToast("That didn't save. Please try again.");
+    }
+  }
+
+  _focusComplete(chore) {
+    this._celebrate(chore.id);
+    const userId = this.hass?.user?.id;
+    return this._focusAction(chore, "complete_chore", userId ? { user_id: userId } : {}, null);
+  }
+
+  _focusSnooze(chore) {
+    return this._focusAction(chore, "snooze_chore", {}, `"${chore.name}" moved to tomorrow`);
+  }
+
+  _focusSkip(chore) {
+    return this._focusAction(chore, "skip_chore", {}, `"${chore.name}" skipped to next time`);
+  }
+
+  // --- Micro-steps ---------------------------------------------------------
+
+  /**
+   * Whether a step reads as done, preferring a pending local tick over the
+   * last value the sensors reported.
+   */
+  _stepIsDone(chore, index) {
+    const key = `${chore.id}:${index}`;
+    if (key in this._stepOptimistic) return this._stepOptimistic[key];
+    return (chore.step_progress || []).includes(index);
+  }
+
+  _countDoneSteps(chore) {
+    const steps = chore.steps || [];
+    return steps.reduce((total, _step, index) => total + (this._stepIsDone(chore, index) ? 1 : 0), 0);
+  }
+
+  async _toggleStep(chore, index) {
+    const key = `${chore.id}:${index}`;
+    const next = !this._stepIsDone(chore, index);
+    this._stepOptimistic = { ...this._stepOptimistic, [key]: next };
+
+    try {
+      await this.hass.callService("simple_chores", "toggle_chore_step", {
+        chore_id: chore.id,
+        step_index: index,
+        completed: next,
+      });
+    } catch (error) {
+      console.error("Simple Chores Card: Error toggling step:", error);
+      const rolledBack = { ...this._stepOptimistic };
+      delete rolledBack[key];
+      this._stepOptimistic = rolledBack;
+      this._showToast("Couldn't save that step. Please try again.");
+    }
+  }
+
+  _toggleStepsExpanded(choreId) {
+    this._expandedSteps = { ...this._expandedSteps, [choreId]: !this._expandedSteps[choreId] };
+  }
+
+  // --- Inline estimate capture --------------------------------------------
+
+  _promptForEstimate(choreId) {
+    this._estimatePromptFor = this._estimatePromptFor === choreId ? null : choreId;
+  }
+
+  async _setEstimate(chore, minutes) {
+    this._estimatePromptFor = null;
+    try {
+      await this.hass.callService("simple_chores", "update_chore", {
+        chore_id: chore.id,
+        estimated_minutes: minutes,
+      });
+      this._showToast(`"${chore.name}" takes about ${this._formatMinutes(minutes)}`);
+    } catch (error) {
+      console.error("Simple Chores Card: Error saving estimate:", error);
+      this._showToast("Couldn't save that estimate. Please try again.");
+    }
+  }
+
+  // --- Timer ---------------------------------------------------------------
+
+  _clearTimerInterval() {
+    if (this._timerInterval) {
+      clearInterval(this._timerInterval);
+      this._timerInterval = null;
+    }
+  }
+
+  _startTimer(chore) {
+    const minutes = this._choreMinutes(chore);
+    if (!minutes) return;
+
+    this._clearTimerInterval();
+    const total = minutes * 60;
+    // Track an absolute end time so a backgrounded tab doesn't drift
+    this._focusTimer = {
+      choreId: chore.id,
+      total,
+      remaining: total,
+      endsAt: Date.now() + total * 1000,
+      finished: false,
+    };
+    this._timerInterval = setInterval(() => this._tickTimer(), 1000);
+  }
+
+  _tickTimer() {
+    if (!this._focusTimer) {
+      this._clearTimerInterval();
+      return;
+    }
+    const remaining = Math.max(0, Math.round((this._focusTimer.endsAt - Date.now()) / 1000));
+    const finished = remaining === 0;
+    this._focusTimer = { ...this._focusTimer, remaining, finished };
+    if (finished) this._clearTimerInterval();
+  }
+
+  /**
+   * @param {string} [choreId] - Only stop if the timer belongs to this chore
+   */
+  _stopTimer(choreId) {
+    if (choreId && this._focusTimer && this._focusTimer.choreId !== choreId) return;
+    this._clearTimerInterval();
+    this._focusTimer = null;
+  }
+
+  _toggleTimer(chore) {
+    if (this._focusTimer && this._focusTimer.choreId === chore.id) {
+      this._stopTimer(chore.id);
+    } else {
+      this._startTimer(chore);
+    }
+  }
+
+  // --- Celebration ---------------------------------------------------------
+
+  _celebrate(choreId) {
+    const { CELEBRATION_PARTICLES, CELEBRATION_MS } = this.constructor.constants;
+    const colors = ['#f97316', '#22c55e', '#3b82f6', '#eab308', '#ec4899', '#06b6d4'];
+
+    // Randomise once, not on every re-render, so the burst doesn't jitter
+    const particles = Array.from({ length: CELEBRATION_PARTICLES }, (_unused, i) => ({
+      left: Math.round(Math.random() * 100),
+      delay: Math.round(Math.random() * 220),
+      drift: Math.round((Math.random() - 0.5) * 140),
+      duration: 900 + Math.round(Math.random() * 500),
+      color: colors[i % colors.length],
+    }));
+
+    this._celebration = { id: choreId, particles };
+    this._setTimeout(() => { this._celebration = null; }, CELEBRATION_MS);
+  }
+
+  // --- Swipe ---------------------------------------------------------------
+
+  _handleDeckTouchStart(e) {
+    // Let buttons handle their own taps
+    if (e.target && e.target.closest && e.target.closest('button')) {
+      this._touchStart = null;
+      return;
+    }
+    const touch = e.changedTouches && e.changedTouches[0];
+    this._touchStart = touch ? { x: touch.clientX, y: touch.clientY } : null;
+  }
+
+  _handleDeckTouchEnd(e) {
+    const start = this._touchStart;
+    this._touchStart = null;
+    if (!start) return;
+
+    const touch = e.changedTouches && e.changedTouches[0];
+    if (!touch) return;
+
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    // Require a decisive horizontal swipe so scrolling doesn't complete chores
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+
+    const queue = this._getFocusQueue();
+    const chore = queue[this._clampFocusIndex(queue)];
+    if (!chore) return;
+
+    if (dx > 0) {
+      this._focusComplete(chore);
+    } else {
+      this._focusSnooze(chore);
+    }
+  }
+
+  // --- Focus view rendering ------------------------------------------------
+
+  _renderFocusView() {
+    const pool = this._getFocusPool();
+    const queue = this._getFocusQueue();
+
+    return html`
+      <div class="focus-view">
+        ${this._renderFocusToolbar(pool)}
+        ${this._renderFocusProgress(queue)}
+        ${queue.length === 0
+          ? this._renderFocusEmpty(pool)
+          : (this._focusMode === 'board' ? this._renderFocusBoard(queue) : this._renderFocusDeck(queue))}
+        ${this._renderCelebration()}
+      </div>
+    `;
+  }
+
+  _renderFocusToolbar(pool) {
+    const { TIME_BUDGETS } = this.constructor.constants;
+    const chipIcons = { 5: 'mdi:flash', 15: 'mdi:clock-outline', 30: 'mdi:arm-flex' };
+
+    const countWithin = (budget) => pool.filter(chore => {
+      const minutes = this._choreMinutes(chore);
+      return minutes !== null && minutes <= budget;
+    }).length;
+
+    return html`
+      <div class="focus-toolbar">
+        <div class="focus-chips" role="group" aria-label="How much time do you have?">
+          ${TIME_BUDGETS.map(budget => {
+            const count = countWithin(budget);
+            const active = this._timeBudget === budget;
+            return html`
+              <button
+                class="focus-chip ${active ? 'active' : ''}"
+                ?disabled=${count === 0 && !active}
+                aria-pressed=${active}
+                @click=${() => this._setTimeBudget(budget)}
+                title="Chores that take ${budget} minutes or less"
+              >
+                <ha-icon icon="${chipIcons[budget] || 'mdi:clock-outline'}"></ha-icon>
+                <span>${budget}m</span>
+                <span class="focus-chip-count">${count}</span>
+              </button>
+            `;
+          })}
+          <button
+            class="focus-chip ${this._timeBudget === null ? 'active' : ''}"
+            aria-pressed=${this._timeBudget === null}
+            @click=${() => this._setTimeBudget(null)}
+            title="No time limit"
+          >
+            <span>Anything</span>
+            <span class="focus-chip-count">${pool.length}</span>
+          </button>
+        </div>
+
+        <div class="focus-toolbar-actions">
+          <button class="focus-icon-btn" @click=${this._focusShuffle} title="Pick one for me">
+            <ha-icon icon="mdi:shuffle-variant"></ha-icon>
+          </button>
+          <button
+            class="focus-icon-btn"
+            @click=${this._toggleFocusMode}
+            title="${this._focusMode === 'deck' ? 'Show everything as a board' : 'Show one at a time'}"
+          >
+            <ha-icon icon="${this._focusMode === 'deck' ? 'mdi:view-grid-outline' : 'mdi:cards-outline'}"></ha-icon>
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderFocusProgress(queue) {
+    const done = this._getDoneTodayCount();
+    const total = done + queue.length;
+    const percent = total > 0 ? Math.round((done / total) * 100) : 0;
+    const streak = this._getStreak();
+
+    return html`
+      <div class="focus-progress">
+        <div class="focus-progress-label">
+          <span><strong>${done}</strong> of ${total} done today</span>
+          ${streak > 1 ? html`
+            <span class="focus-streak" title="${streak} days in a row with at least one chore done">
+              <ha-icon icon="mdi:fire"></ha-icon>${streak} day streak
+            </span>
+          ` : ''}
+        </div>
+        <div
+          class="focus-progress-track"
+          role="progressbar"
+          aria-valuenow=${done}
+          aria-valuemin="0"
+          aria-valuemax=${total}
+          aria-label="Chores done today"
+        >
+          <div class="focus-progress-fill" style="width: ${percent}%"></div>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderFocusDeck(queue) {
+    const index = this._clampFocusIndex(queue);
+    const chore = queue[index];
+
+    return html`
+      <div
+        class="focus-deck"
+        @touchstart=${this._handleDeckTouchStart}
+        @touchend=${this._handleDeckTouchEnd}
+      >
+        <div class="focus-deck-position">
+          <button class="focus-nav-btn" ?disabled=${index === 0} @click=${this._focusPrev} title="Previous chore">
+            <ha-icon icon="mdi:chevron-left"></ha-icon>
+          </button>
+          <span>${index + 1} of ${queue.length}</span>
+          <button
+            class="focus-nav-btn"
+            ?disabled=${index >= queue.length - 1}
+            @click=${this._focusNext}
+            title="Next chore"
+          >
+            <ha-icon icon="mdi:chevron-right"></ha-icon>
+          </button>
+        </div>
+
+        ${this._renderFocusCard(chore, { expanded: true })}
+
+        <div class="focus-deck-actions">
+          <button class="focus-action later" @click=${() => this._focusSnooze(chore)}>
+            <ha-icon icon="mdi:sleep"></ha-icon>
+            <span>Later</span>
+          </button>
+          <button class="focus-action skip" @click=${() => this._focusSkip(chore)}>
+            <ha-icon icon="mdi:skip-next"></ha-icon>
+            <span>Skip</span>
+          </button>
+          <button class="focus-action done" @click=${() => this._focusComplete(chore)}>
+            <ha-icon icon="mdi:check-bold"></ha-icon>
+            <span>Done</span>
+          </button>
+        </div>
+
+        <div class="focus-hint">Swipe right when it's done, left for later</div>
+      </div>
+    `;
+  }
+
+  _renderFocusBoard(queue) {
+    // A wall display renders every card at once, so cap it - 100+ chore cards
+    // with four buttons each is a lot of DOM for a tablet
+    const limit = this._choreLimits.focusBoard;
+    const shown = queue.slice(0, limit);
+    const remaining = queue.length - shown.length;
+
+    return html`
+      <div class="focus-board">
+        ${shown.map(chore => this._renderFocusCard(chore, { expanded: false }))}
+      </div>
+      ${remaining > 0 ? html`
+        <button class="load-more-btn" @click=${() => this._loadMoreChores('focusBoard', queue.length)}>
+          Show ${remaining} more
+        </button>
+      ` : ''}
+    `;
+  }
+
+  /**
+   * A single chore card.
+   * @param {Object} chore
+   * @param {Object} options
+   * @param {boolean} options.expanded - Deck layout: bigger, steps always open,
+   *   and the action buttons live outside the card
+   */
+  _renderFocusCard(chore, { expanded = false } = {}) {
+    if (!chore) return '';
+
+    const minutes = this._choreMinutes(chore);
+    const steps = chore.steps || [];
+    const doneSteps = this._countDoneSteps(chore);
+    const roomName = this._resolveRoomName(chore);
+    const roomIcon = this._getRoomIcon(chore.room_id || chore.room);
+    const overdueDays = Number(chore.days_overdue) || 0;
+    const timerRunning = this._focusTimer && this._focusTimer.choreId === chore.id;
+    const stepsOpen = expanded || this._expandedSteps[chore.id];
+
+    return html`
+      <div class="focus-card ${expanded ? 'expanded' : 'compact'} ${overdueDays > 0 ? 'overdue' : ''}">
+        <div class="focus-card-room">
+          <ha-icon icon="${roomIcon}"></ha-icon>
+          <span>${roomName}</span>
+          ${overdueDays > 0 ? html`
+            <span class="focus-overdue-badge">
+              ${overdueDays} day${overdueDays === 1 ? '' : 's'} late
+            </span>
+          ` : ''}
+        </div>
+
+        <div class="focus-card-name">${chore.name}</div>
+
+        <div class="focus-card-time">
+          ${minutes !== null ? html`
+            <button
+              class="focus-time-chip ${timerRunning ? 'running' : ''}"
+              @click=${() => this._toggleTimer(chore)}
+              title="${timerRunning ? 'Stop the timer' : `Start a ${this._formatMinutes(minutes)} timer`}"
+            >
+              <ha-icon icon="${timerRunning ? 'mdi:stop' : 'mdi:timer-outline'}"></ha-icon>
+              <span>${this._formatMinutes(minutes)}</span>
+            </button>
+          ` : this._renderEstimatePrompt(chore)}
+          ${steps.length > 0 && !expanded ? html`
+            <button class="focus-steps-toggle" @click=${() => this._toggleStepsExpanded(chore.id)}>
+              <ha-icon icon="${stepsOpen ? 'mdi:chevron-up' : 'mdi:format-list-checks'}"></ha-icon>
+              <span>${doneSteps}/${steps.length}</span>
+            </button>
+          ` : ''}
+        </div>
+
+        ${timerRunning ? this._renderTimerRing() : ''}
+        ${stepsOpen && steps.length > 0 ? this._renderSteps(chore, steps, doneSteps) : ''}
+
+        ${expanded ? '' : html`
+          <div class="focus-card-actions">
+            <button class="focus-mini-btn" @click=${() => this._focusSnooze(chore)} title="Later">
+              <ha-icon icon="mdi:sleep"></ha-icon>
+            </button>
+            <button class="focus-mini-btn" @click=${() => this._focusSkip(chore)} title="Skip to next time">
+              <ha-icon icon="mdi:skip-next"></ha-icon>
+            </button>
+            <button class="focus-mini-btn done" @click=${() => this._focusComplete(chore)} title="Done">
+              <ha-icon icon="mdi:check-bold"></ha-icon>
+            </button>
+          </div>
+        `}
+      </div>
+    `;
+  }
+
+  _renderSteps(chore, steps, doneSteps) {
+    const percent = steps.length > 0 ? Math.round((doneSteps / steps.length) * 100) : 0;
+
+    return html`
+      <div class="focus-steps">
+        <div class="focus-steps-bar">
+          <div class="focus-steps-fill" style="width: ${percent}%"></div>
+        </div>
+        <ul class="focus-step-list">
+          ${steps.map((step, index) => {
+            const done = this._stepIsDone(chore, index);
+            return html`
+              <li>
+                <button
+                  class="focus-step ${done ? 'done' : ''}"
+                  role="checkbox"
+                  aria-checked=${done}
+                  @click=${() => this._toggleStep(chore, index)}
+                >
+                  <ha-icon icon="${done ? 'mdi:check-circle' : 'mdi:circle-outline'}"></ha-icon>
+                  <span>${step}</span>
+                </button>
+              </li>
+            `;
+          })}
+        </ul>
+      </div>
+    `;
+  }
+
+  /**
+   * Chores with no estimate can't be matched to a time budget, so offer to
+   * capture one right here rather than sending people to the edit form.
+   */
+  _renderEstimatePrompt(chore) {
+    if (this._estimatePromptFor !== chore.id) {
+      return html`
+        <button class="focus-time-chip unset" @click=${() => this._promptForEstimate(chore.id)}>
+          <ha-icon icon="mdi:timer-plus-outline"></ha-icon>
+          <span>How long?</span>
+        </button>
+      `;
+    }
+
+    return html`
+      <div class="focus-estimate-picker">
+        ${this.constructor.constants.QUICK_ESTIMATES.map(minutes => html`
+          <button class="focus-estimate-btn" @click=${() => this._setEstimate(chore, minutes)}>
+            ${minutes}m
+          </button>
+        `)}
+        <button class="focus-estimate-btn cancel" @click=${() => this._promptForEstimate(chore.id)}>
+          <ha-icon icon="mdi:close"></ha-icon>
+        </button>
+      </div>
+    `;
+  }
+
+  _renderTimerRing() {
+    const timer = this._focusTimer;
+    if (!timer) return '';
+
+    const radius = 26;
+    const circumference = 2 * Math.PI * radius;
+    const fraction = timer.total > 0 ? timer.remaining / timer.total : 0;
+
+    return html`
+      <div class="focus-timer ${timer.finished ? 'finished' : ''}">
+        <svg viewBox="0 0 64 64" class="focus-timer-ring" aria-hidden="true">
+          <circle class="ring-track" cx="32" cy="32" r="${radius}"></circle>
+          <circle
+            class="ring-value"
+            cx="32"
+            cy="32"
+            r="${radius}"
+            stroke-dasharray="${circumference}"
+            stroke-dashoffset="${circumference * (1 - fraction)}"
+          ></circle>
+        </svg>
+        <span class="focus-timer-text">
+          ${timer.finished ? "Time's up!" : this._formatClock(timer.remaining)}
+        </span>
+      </div>
+    `;
+  }
+
+  _renderFocusEmpty(pool) {
+    // Filtered everything out rather than actually being finished
+    if (this._timeBudget !== null && pool.length > 0) {
+      const unestimated = pool.filter(chore => this._choreMinutes(chore) === null).length;
+      return html`
+        <div class="focus-empty">
+          <ha-icon icon="mdi:timer-sand-empty"></ha-icon>
+          <h3>Nothing that quick right now</h3>
+          <p>
+            ${unestimated === pool.length
+              ? html`None of your remaining chores have a time estimate yet. Tap <em>How long?</em> on a card and this filter starts working.`
+              : html`${pool.length} chore${pool.length === 1 ? '' : 's'} left, but ${pool.length === 1 ? 'it takes' : 'they all take'} longer than ${this._timeBudget} minutes.`}
+          </p>
+          <button class="focus-empty-btn" @click=${() => this._setTimeBudget(null)}>Show anything</button>
+        </div>
+      `;
+    }
+
+    if (!this._focusGetAhead) {
+      return html`
+        <div class="focus-empty done">
+          <ha-icon icon="mdi:party-popper"></ha-icon>
+          <h3>All caught up</h3>
+          <p>Nothing else is due today.</p>
+          <button class="focus-empty-btn" @click=${this._focusStartGetAhead}>Get ahead on this week</button>
+        </div>
+      `;
+    }
+
+    return html`
+      <div class="focus-empty done">
+        <ha-icon icon="mdi:party-popper"></ha-icon>
+        <h3>Nothing left this week either</h3>
+        <p>Genuinely nothing to do. Go sit down.</p>
+      </div>
+    `;
+  }
+
+  _renderCelebration() {
+    if (!this._celebration) return '';
+
+    return html`
+      <div class="focus-confetti" aria-hidden="true">
+        ${this._celebration.particles.map(particle => html`
+          <span style="left: ${particle.left}%; background: ${particle.color}; animation-delay: ${particle.delay}ms; animation-duration: ${particle.duration}ms; --drift: ${particle.drift}px"></span>
+        `)}
+      </div>
+    `;
   }
 
   _completeChore(choreId) {
@@ -2669,6 +3657,113 @@ class SimpleChoresCard extends LitElement {
     this._handleFormInput('chore', 'assignedTo', e.target.value);
   }
 
+  /**
+   * @param {string|number} raw - Raw form value
+   * @returns {number|null} Whole minutes, or null when blank/invalid
+   */
+  _parseEstimatedMinutes(raw) {
+    if (raw === "" || raw === null || raw === undefined) return null;
+    const minutes = Math.round(Number(raw));
+    if (!Number.isFinite(minutes) || minutes < 1) return null;
+    return Math.min(minutes, 480);
+  }
+
+  /** Drop blank rows so an empty step field doesn't become an empty step. */
+  _cleanSteps(steps) {
+    return (steps || []).map(step => String(step).trim()).filter(Boolean);
+  }
+
+  _handleEstimatedMinutesInput(e) {
+    this._handleFormInput('chore', 'estimatedMinutes', e.target.value);
+  }
+
+  _handleStepInput(index, value) {
+    const steps = [...(this._formData.chore.steps || [])];
+    steps[index] = value;
+    this._handleFormInput('chore', 'steps', steps);
+  }
+
+  _addStepField() {
+    const steps = [...(this._formData.chore.steps || [])];
+    if (steps.length >= 12) {
+      this._showToast("12 steps is the limit - consider splitting this into two chores.");
+      return;
+    }
+    steps.push("");
+    this._handleFormInput('chore', 'steps', steps);
+
+    // Focus the field we just added
+    this._setTimeout(() => {
+      const inputs = this.shadowRoot.querySelectorAll('.step-input');
+      const last = inputs[inputs.length - 1];
+      if (last) last.focus();
+    }, this.constructor.constants.MODAL_FOCUS_DELAY);
+  }
+
+  _removeStepField(index) {
+    const steps = [...(this._formData.chore.steps || [])];
+    steps.splice(index, 1);
+    this._handleFormInput('chore', 'steps', steps);
+  }
+
+  /**
+   * The two focus-view fields, shared by the Add and Edit Chore modals.
+   * Both are optional: without them a chore just doesn't take part in the
+   * time-budget filter or show a checklist.
+   */
+  _renderFocusFields() {
+    const steps = this._formData.chore.steps || [];
+
+    return html`
+      <div class="form-group">
+        <label for="chore-minutes">How long does it take? (optional)</label>
+        <input
+          id="chore-minutes"
+          type="number"
+          min="1"
+          max="480"
+          .value=${this._formData.chore.estimatedMinutes ?? ""}
+          @input=${this._handleEstimatedMinutesInput}
+          placeholder="e.g. 5"
+        />
+        <small>Powers the focus view's "I have 5 minutes" filter and its timer</small>
+      </div>
+      <div class="form-group">
+        <label>Steps (optional)</label>
+        ${steps.length > 0 ? html`
+          <div class="step-editor">
+            ${steps.map((step, index) => html`
+              <div class="step-row">
+                <span class="step-number">${index + 1}</span>
+                <input
+                  class="step-input"
+                  type="text"
+                  maxlength="100"
+                  .value=${step}
+                  @input=${(e) => this._handleStepInput(index, e.target.value)}
+                  placeholder="e.g. Clear the counter"
+                />
+                <button
+                  type="button"
+                  class="step-remove"
+                  @click=${() => this._removeStepField(index)}
+                  title="Remove this step"
+                >
+                  <ha-icon icon="mdi:close"></ha-icon>
+                </button>
+              </div>
+            `)}
+          </div>
+        ` : ''}
+        <button type="button" class="step-add" @click=${this._addStepField}>
+          <ha-icon icon="mdi:plus"></ha-icon>
+          Add step
+        </button>
+        <small>Break it into small pieces so starting is easier</small>
+      </div>
+    `;
+  }
+
   _handleRecurrenceTypeChange(e) {
     this._handleFormInput('chore', 'recurrenceType', e.target.value);
     this.requestUpdate();
@@ -3131,6 +4226,7 @@ class SimpleChoresCard extends LitElement {
               </select>
               <small>Assign this chore to a specific person or leave unassigned</small>
             </div>
+            ${this._renderFocusFields()}
     `;
 
     const footer = html`
@@ -3175,7 +4271,9 @@ class SimpleChoresCard extends LitElement {
       anchorDayOfMonth: chore.anchor_day_of_month || 1,
       anchorWeek: chore.anchor_week || 1,
       anchorWeekday: chore.anchor_weekday || 1,
-      interval: chore.interval || 1
+      interval: chore.interval || 1,
+      estimatedMinutes: chore.estimated_minutes ?? "",
+      steps: [...(chore.steps || [])]
     };
 
 
@@ -3318,6 +4416,7 @@ class SimpleChoresCard extends LitElement {
               </select>
               <small>Assign this chore to a specific person or leave unassigned</small>
             </div>
+            ${this._renderFocusFields()}
     `;
 
     const footer = html`
@@ -3362,20 +4461,7 @@ class SimpleChoresCard extends LitElement {
   }
 
   _getAllChores() {
-    // Use the enhanced total_chores sensor which now includes all chore data
-    const totalChoresSensor = this.hass.states[SimpleChoresCard.SENSORS.TOTAL];
-
-    if (totalChoresSensor && totalChoresSensor.attributes && totalChoresSensor.attributes.chores) {
-      return totalChoresSensor.attributes.chores;
-    }
-
-    // Fallback: try the due chores if the sensor isn't available yet
-    const dueToday = this._getDueChores("today");
-    const dueThisWeek = this._getDueChores("week");
-
-    const fallbackChores = [...dueToday, ...dueThisWeek];
-
-    return fallbackChores;
+    return this._choresData.chores;
   }
 
   _renderAllChoresModal() {
@@ -3436,7 +4522,17 @@ class SimpleChoresCard extends LitElement {
               </div>
             ` : html`
               <div class="all-chores-list">
-                ${allChores.map(chore => this._renderChore(chore, { inModal: true, showFrequency: true }))}
+                ${allChores.slice(0, this._choreLimits.allChores).map(chore =>
+                  this._renderChore(chore, { inModal: true, showFrequency: true })
+                )}
+                ${allChores.length > this._choreLimits.allChores ? html`
+                  <button
+                    class="load-more-btn"
+                    @click=${() => this._loadMoreChores('allChores', allChores.length)}
+                  >
+                    Load ${allChores.length - this._choreLimits.allChores} more chores...
+                  </button>
+                ` : ''}
               </div>
             `}
     `;
@@ -3511,7 +4607,9 @@ class SimpleChoresCard extends LitElement {
       anchorDayOfMonth: chore.anchor_day_of_month || 1,
       anchorWeek: chore.anchor_week || 1,
       anchorWeekday: chore.anchor_weekday || 1,
-      interval: chore.interval || 1
+      interval: chore.interval || 1,
+      estimatedMinutes: chore.estimated_minutes ?? "",
+      steps: [...(chore.steps || [])]
     };
 
 
@@ -3683,6 +4781,16 @@ class SimpleChoresCard extends LitElement {
         }
       }
 
+      // Focus view fields - only sent when actually filled in
+      const minutes = this._parseEstimatedMinutes(choreData.estimatedMinutes);
+      if (minutes !== null) {
+        serviceData.estimated_minutes = minutes;
+      }
+      const steps = this._cleanSteps(choreData.steps);
+      if (steps.length > 0) {
+        serviceData.steps = steps;
+      }
+
       await this.hass.callService("simple_chores", "add_chore", serviceData);
       this._showToast("Chore created successfully!");
       this._closeAddChoreModal();
@@ -3745,6 +4853,11 @@ class SimpleChoresCard extends LitElement {
           }
         }
       }
+
+      // Focus view fields - always sent so clearing them sticks
+      // (0 clears an estimate, [] clears the steps)
+      serviceData.estimated_minutes = this._parseEstimatedMinutes(choreData.estimatedMinutes) ?? 0;
+      serviceData.steps = this._cleanSteps(choreData.steps);
 
       await this.hass.callService("simple_chores", "update_chore", serviceData);
       this._showToast("Chore updated successfully!");
@@ -3814,222 +4927,134 @@ class SimpleChoresCard extends LitElement {
     }
   }
 
-  async _getCompletionHistory() {
+
+  /**
+   * Fetch raw completion history over the websocket.
+   *
+   * History is no longer published as a state attribute - it grew without
+   * bound and pushed sensor.total_chores past the recorder's 16 KB limit. Only
+   * the calendar and the history modal need raw entries, so they're fetched on
+   * demand and re-fetched when the completion count changes.
+   * @param {boolean} force - Fetch even if the cache looks current
+   */
+  async _fetchHistory(force = false) {
+    if (!this.hass) return;
+
+    const knownCount = this._getStats()?.total_completions ?? null;
+    if (!force && this._historyFetchedFor !== null && this._historyFetchedFor === knownCount) {
+      return;
+    }
+    if (this._historyFetchInFlight) return;
+
+    this._historyFetchInFlight = true;
     try {
-      const totalChoresSensor = this.hass.states[SimpleChoresCard.SENSORS.TOTAL];
-
-      if (totalChoresSensor && totalChoresSensor.attributes && totalChoresSensor.attributes.completion_history) {
-        const history = totalChoresSensor.attributes.completion_history;
-        // Sort by completion date (newest first)
-        return history.sort((a, b) => new Date(b.completed_at) - new Date(a.completed_at));
-      }
-
-      return [];
-
+      const result = await this.hass.callWS({ type: "simple_chores/history" });
+      const history = (result && result.history) || [];
+      // Newest first, matching what the history modal expects
+      this._historyData = [...history].sort(
+        (a, b) => new Date(b.completed_at) - new Date(a.completed_at)
+      );
+      this._historyFetchedFor = knownCount;
     } catch (error) {
-      console.error("Simple Chores Card: Failed to get completion history:", error);
-      this._showToast("Error loading completion history");
-      return [];
+      console.error("Simple Chores Card: Failed to fetch completion history:", error);
+      this._historyData = this._historyData || [];
+    } finally {
+      this._historyFetchInFlight = false;
     }
   }
 
+  async _getCompletionHistory() {
+    await this._fetchHistory(true);
+    return this._historyData || [];
+  }
+
+  /**
+   * Whatever history has already been fetched. Render paths use this; it may
+   * be empty on first paint until _fetchHistory resolves.
+   */
   _getCompletionHistorySync() {
-    // Synchronous version for calendar rendering
-    try {
-      const totalChoresSensor = this.hass.states[SimpleChoresCard.SENSORS.TOTAL];
-
-      if (totalChoresSensor && totalChoresSensor.attributes && totalChoresSensor.attributes.completion_history) {
-        return totalChoresSensor.attributes.completion_history || [];
-      }
-
-      return [];
-    } catch (error) {
-      console.error("Simple Chores Card: Failed to get completion history sync:", error);
-      return [];
-    }
+    return this._historyData || [];
   }
 
   // ============================================
   // STATISTICS DASHBOARD METHODS
   // ============================================
 
-  _isStatsCacheValid() {
-    return this._statsCache.data !== null &&
-           (Date.now() - this._statsCache.lastUpdate) < this._statsCache.ttl;
+
+  /**
+   * Read the precomputed statistics attribute.
+   * @returns {Object|null}
+   */
+  _getStats() {
+    const sensor = this.hass?.states?.[SimpleChoresCard.SENSORS.TOTAL];
+    return sensor?.attributes?.statistics || null;
   }
 
+  /**
+   * Map the backend's statistics attribute onto the shapes the stats
+   * dashboard renders from. These used to be derived here from raw history.
+   */
   _calculateStatsData() {
-    // Check cache first
-    if (this._isStatsCacheValid()) {
-      return this._statsCache.data;
+    const stats = this._getStats();
+    if (!stats) {
+      return {
+        completionsOverTime: [],
+        topChores: { mostCompleted: [], leastCompleted: [] },
+        roomStats: [],
+        userStats: [],
+        totalCompletions: 0,
+      };
     }
 
-    const history = this._getCompletionHistorySync();
-    const chores = this._getAllChores();
-    const rooms = this._getRooms();
-
-    const stats = {
-      completionsOverTime: this._calculateCompletionsOverTime(history),
-      topChores: this._calculateTopChores(history),
-      roomStats: this._calculateRoomStats(history, chores, rooms),
-      userStats: this._calculateUserStats(history),
-      totalCompletions: history.length
-    };
-
-    // Update cache
-    this._statsCache.data = stats;
-    this._statsCache.lastUpdate = Date.now();
-
-    return stats;
-  }
-
-  _calculateCompletionsOverTime(history) {
     const { STATS_PERIODS, STATS_DEFAULT_PERIOD } = this.constructor.constants;
-
-    const config = STATS_PERIODS[this._statsTimePeriod] || STATS_PERIODS[STATS_DEFAULT_PERIOD];
-    const now = new Date();
-    const cutoffDate = new Date(now);
-    cutoffDate.setDate(cutoffDate.getDate() - config.days);
-
-    // Filter history to time period
-    const relevantHistory = history.filter(h =>
-      new Date(h.completed_at) >= cutoffDate
-    );
-
-    return this._groupByPeriod(relevantHistory, config.groupBy, config.labels);
-  }
-
-  _groupByPeriod(history, groupBy, numLabels) {
-    const groups = new Map();
-    const now = new Date();
-
-    // Initialize all periods with 0
-    for (let i = numLabels - 1; i >= 0; i--) {
-      const date = new Date(now);
-      let label, key;
-
-      if (groupBy === 'day') {
-        date.setDate(date.getDate() - i);
-        label = date.toLocaleDateString('en-US', { weekday: 'short' });
-        key = this._toLocalDateStr(date);
-      } else if (groupBy === 'week') {
-        date.setDate(date.getDate() - (i * 7));
-        label = `W${numLabels - i}`;
-        key = this._getWeekKey(date);
-      } else { // month
-        date.setMonth(date.getMonth() - i);
-        label = date.toLocaleDateString('en-US', { month: 'short' });
-        key = `${date.getFullYear()}-${date.getMonth()}`;
-      }
-
-      groups.set(key, { label, count: 0, date: new Date(date) });
-    }
-
-    // Count completions
-    history.forEach(entry => {
-      const date = new Date(entry.completed_at);
-      let key;
-
-      if (groupBy === 'day') {
-        key = this._toLocalDateStr(date);
-      } else if (groupBy === 'week') {
-        key = this._getWeekKey(date);
-      } else {
-        key = `${date.getFullYear()}-${date.getMonth()}`;
-      }
-
-      if (groups.has(key)) {
-        groups.get(key).count++;
-      }
-    });
-
-    return Array.from(groups.values());
-  }
-
-  _getWeekKey(date) {
-    // Get ISO week number
-    const d = new Date(date);
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() + 4 - (d.getDay() || 7));
-    const yearStart = new Date(d.getFullYear(), 0, 1);
-    const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-    return `${d.getFullYear()}-W${weekNo}`;
-  }
-
-  _calculateTopChores(history) {
-    const choreCounts = new Map();
-
-    history.forEach(entry => {
-      const name = entry.chore_name;
-      choreCounts.set(name, (choreCounts.get(name) || 0) + 1);
-    });
-
-    const sorted = Array.from(choreCounts.entries())
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count);
+    const period = STATS_PERIODS[this._statsTimePeriod] || STATS_PERIODS[STATS_DEFAULT_PERIOD];
+    const buckets = (stats.by_period || {})[this._statsTimePeriod] || [];
 
     return {
-      mostCompleted: sorted.slice(0, 5),
-      leastCompleted: sorted.length > 5 ? sorted.slice(-5).reverse() : []
+      completionsOverTime: this._formatPeriodBuckets(buckets, period.groupBy),
+      topChores: {
+        mostCompleted: stats.top_chores?.most_completed || [],
+        leastCompleted: stats.top_chores?.least_completed || [],
+      },
+      roomStats: stats.by_room || [],
+      userStats: stats.by_user || [],
+      totalCompletions: stats.total_completions || 0,
     };
   }
 
-  _calculateRoomStats(history, chores, rooms) {
-    const roomCompletions = new Map();
-
-    // Build chore-to-room lookup
-    const choreRoomMap = new Map();
-    chores.forEach(chore => {
-      choreRoomMap.set(chore.id, chore.room_id || chore.room);
-    });
-
-    // Count completions per room
-    history.forEach(entry => {
-      const roomId = choreRoomMap.get(entry.chore_id);
-      if (roomId) {
-        roomCompletions.set(roomId, (roomCompletions.get(roomId) || 0) + 1);
+  /**
+   * Turn {start, count} buckets into the {label, count} pairs the chart wants.
+   * Labels are formatted here so date formatting stays on the client.
+   * @param {Array<{start: string, count: number}>} buckets - Oldest first
+   * @param {string} groupBy - 'day' | 'week' | 'month'
+   */
+  _formatPeriodBuckets(buckets, groupBy) {
+    return buckets.map((bucket, index) => {
+      const date = this._parseLocalDate(bucket.start);
+      let label;
+      if (groupBy === 'day') {
+        label = date.toLocaleDateString('en-US', { weekday: 'short' });
+      } else if (groupBy === 'week') {
+        label = `W${index + 1}`;
+      } else {
+        label = date.toLocaleDateString('en-US', { month: 'short' });
       }
+      return { label, count: bucket.count || 0, start: bucket.start };
     });
-
-    // Build room stats array
-    return rooms.map(room => ({
-      id: room.id,
-      name: room.name,
-      icon: room.icon,
-      completions: roomCompletions.get(room.id) || 0
-    })).filter(r => r.completions > 0)
-      .sort((a, b) => b.completions - a.completions);
   }
 
-  _calculateUserStats(history) {
-    const userCounts = new Map();
 
-    history.forEach(entry => {
-      const userId = entry.completed_by;
-      const userName = entry.completed_by_name || 'Unknown';
 
-      if (!userCounts.has(userId)) {
-        userCounts.set(userId, { id: userId, name: userName, count: 0 });
-      }
-      userCounts.get(userId).count++;
-    });
 
-    return Array.from(userCounts.values())
-      .sort((a, b) => b.count - a.count);
-  }
+
+
 
   _toggleExpandedStats() {
     this._showExpandedStats = !this._showExpandedStats;
-    // Invalidate cache when expanding to get fresh data
-    if (this._showExpandedStats) {
-      this._statsCache.data = null;
-    }
   }
 
   _setStatsPeriod(period) {
     this._statsTimePeriod = period;
-    // Invalidate cache when period changes
-    this._statsCache.data = null;
     this.requestUpdate();
   }
 
@@ -6281,6 +7306,695 @@ class SimpleChoresCard extends LitElement {
           width: 100%;
         }
       }
+
+      /* ============================================
+         STEP EDITOR (Add / Edit Chore modals)
+         ============================================ */
+      .step-editor {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-bottom: 8px;
+      }
+
+      .step-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .step-number {
+        flex-shrink: 0;
+        width: 22px;
+        height: 22px;
+        line-height: 22px;
+        border-radius: 50%;
+        background: var(--secondary-background-color);
+        color: var(--secondary-text-color);
+        font-size: 0.8em;
+        text-align: center;
+      }
+
+      .step-input {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .step-remove {
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--secondary-text-color);
+        cursor: pointer;
+      }
+
+      .step-remove:hover {
+        background: var(--secondary-background-color);
+        color: var(--error-color, #ef4444);
+      }
+
+      .step-remove ha-icon {
+        --mdc-icon-size: 18px;
+      }
+
+      .step-add {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 14px;
+        border: 1px dashed var(--divider-color);
+        border-radius: 8px;
+        background: transparent;
+        color: var(--primary-color);
+        font-size: 0.9em;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .step-add:hover {
+        border-color: var(--primary-color);
+      }
+
+      .step-add ha-icon {
+        --mdc-icon-size: 16px;
+      }
+
+      .chores-loading {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        padding: 40px 20px;
+        color: var(--secondary-text-color);
+      }
+
+      /* ============================================
+         FOCUS VIEW ("CHORE BOOK")
+         ============================================ */
+      .focus-view {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      /* --- Toolbar: time budget chips --- */
+      .focus-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .focus-chips {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .focus-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 14px;
+        border: 2px solid var(--divider-color);
+        border-radius: 999px;
+        background: var(--card-background-color);
+        color: var(--primary-text-color);
+        font-size: 0.95em;
+        font-weight: 600;
+        cursor: pointer;
+        transition: border-color 0.15s, background-color 0.15s, color 0.15s;
+      }
+
+      .focus-chip:hover:not(:disabled) {
+        border-color: var(--primary-color);
+      }
+
+      .focus-chip.active {
+        background: linear-gradient(to right, #06b6d4, #3b82f6);
+        border-color: transparent;
+        color: white;
+      }
+
+      .focus-chip:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+
+      .focus-chip ha-icon {
+        --mdc-icon-size: 18px;
+      }
+
+      .focus-chip-count {
+        min-width: 20px;
+        padding: 0 6px;
+        border-radius: 999px;
+        background: var(--secondary-background-color);
+        color: var(--secondary-text-color);
+        font-size: 0.85em;
+        text-align: center;
+      }
+
+      .focus-chip.active .focus-chip-count {
+        background: rgba(255, 255, 255, 0.25);
+        color: white;
+      }
+
+      .focus-toolbar-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .focus-icon-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 44px;
+        height: 44px;
+        border: 2px solid var(--divider-color);
+        border-radius: 12px;
+        background: var(--card-background-color);
+        color: var(--primary-text-color);
+        cursor: pointer;
+        transition: border-color 0.15s, transform 0.15s;
+      }
+
+      .focus-icon-btn:hover {
+        border-color: var(--primary-color);
+        transform: translateY(-1px);
+      }
+
+      /* --- Progress + streak --- */
+      .focus-progress {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .focus-progress-label {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        font-size: 0.95em;
+        color: var(--secondary-text-color);
+      }
+
+      .focus-progress-label strong {
+        color: var(--primary-text-color);
+        font-size: 1.15em;
+      }
+
+      .focus-streak {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 3px 10px;
+        border-radius: 999px;
+        background: rgba(249, 115, 22, 0.15);
+        color: #f97316;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+
+      .focus-streak ha-icon {
+        --mdc-icon-size: 16px;
+      }
+
+      .focus-progress-track {
+        height: 8px;
+        border-radius: 999px;
+        background: var(--secondary-background-color);
+        overflow: hidden;
+      }
+
+      .focus-progress-fill {
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(to right, #06b6d4, #22c55e);
+        transition: width 0.4s ease;
+      }
+
+      /* --- Deck layout (one card at a time) --- */
+      .focus-deck {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 14px;
+      }
+
+      .focus-deck-position {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        color: var(--secondary-text-color);
+        font-size: 0.9em;
+      }
+
+      .focus-nav-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 34px;
+        height: 34px;
+        border: none;
+        border-radius: 50%;
+        background: var(--secondary-background-color);
+        color: var(--primary-text-color);
+        cursor: pointer;
+      }
+
+      .focus-nav-btn:disabled {
+        opacity: 0.3;
+        cursor: not-allowed;
+      }
+
+      /* --- Board layout (grid of cards) --- */
+      .focus-board {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+        gap: 12px;
+      }
+
+      /* --- The card itself --- */
+      .focus-card {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 16px;
+        border: 2px solid var(--divider-color);
+        border-radius: 16px;
+        background: var(--card-background-color);
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+      }
+
+      .focus-card.expanded {
+        gap: 14px;
+        padding: 24px;
+        min-height: 210px;
+        justify-content: flex-start;
+      }
+
+      .focus-card.overdue {
+        border-color: var(--error-color, #ef4444);
+      }
+
+      .focus-card-room {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.8em;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--secondary-text-color);
+      }
+
+      .focus-card-room ha-icon {
+        --mdc-icon-size: 16px;
+      }
+
+      .focus-overdue-badge {
+        margin-left: auto;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: var(--error-color, #ef4444);
+        color: white;
+        font-size: 0.9em;
+        letter-spacing: 0;
+        text-transform: none;
+        white-space: nowrap;
+      }
+
+      .focus-card-name {
+        font-size: 1.25em;
+        font-weight: 600;
+        line-height: 1.3;
+        color: var(--primary-text-color);
+      }
+
+      .focus-card.expanded .focus-card-name {
+        font-size: 1.8em;
+      }
+
+      .focus-card-time {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .focus-time-chip,
+      .focus-steps-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border: none;
+        border-radius: 999px;
+        background: var(--secondary-background-color);
+        color: var(--primary-text-color);
+        font-size: 0.9em;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .focus-time-chip.running {
+        background: var(--error-color, #ef4444);
+        color: white;
+      }
+
+      .focus-time-chip.unset {
+        background: transparent;
+        border: 1px dashed var(--divider-color);
+        color: var(--secondary-text-color);
+        font-weight: 500;
+      }
+
+      .focus-time-chip ha-icon,
+      .focus-steps-toggle ha-icon {
+        --mdc-icon-size: 16px;
+      }
+
+      /* --- Inline "how long does this take?" capture --- */
+      .focus-estimate-picker {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      .focus-estimate-btn {
+        min-width: 40px;
+        padding: 6px 10px;
+        border: 2px solid var(--divider-color);
+        border-radius: 8px;
+        background: var(--card-background-color);
+        color: var(--primary-text-color);
+        font-size: 0.9em;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .focus-estimate-btn:hover {
+        border-color: var(--primary-color);
+      }
+
+      .focus-estimate-btn.cancel {
+        min-width: 0;
+        border: none;
+        color: var(--secondary-text-color);
+      }
+
+      .focus-estimate-btn ha-icon {
+        --mdc-icon-size: 16px;
+      }
+
+      /* --- Micro-steps --- */
+      .focus-steps {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .focus-steps-bar {
+        height: 4px;
+        border-radius: 999px;
+        background: var(--secondary-background-color);
+        overflow: hidden;
+      }
+
+      .focus-steps-fill {
+        height: 100%;
+        border-radius: 999px;
+        background: #22c55e;
+        transition: width 0.3s ease;
+      }
+
+      .focus-step-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .focus-step {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        padding: 8px 6px;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--primary-text-color);
+        font-size: 1em;
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .focus-step:hover {
+        background: var(--secondary-background-color);
+      }
+
+      .focus-step ha-icon {
+        --mdc-icon-size: 22px;
+        flex-shrink: 0;
+        color: var(--secondary-text-color);
+      }
+
+      .focus-step.done ha-icon {
+        color: #22c55e;
+      }
+
+      .focus-step.done span {
+        text-decoration: line-through;
+        color: var(--secondary-text-color);
+      }
+
+      /* --- Timer ring --- */
+      .focus-timer {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .focus-timer-ring {
+        width: 64px;
+        height: 64px;
+        flex-shrink: 0;
+        transform: rotate(-90deg);
+      }
+
+      .focus-timer-ring .ring-track,
+      .focus-timer-ring .ring-value {
+        fill: none;
+        stroke-width: 6;
+        stroke-linecap: round;
+      }
+
+      .focus-timer-ring .ring-track {
+        stroke: var(--secondary-background-color);
+      }
+
+      .focus-timer-ring .ring-value {
+        stroke: #06b6d4;
+        transition: stroke-dashoffset 1s linear;
+      }
+
+      .focus-timer.finished .ring-value {
+        stroke: var(--error-color, #ef4444);
+      }
+
+      .focus-timer-text {
+        font-size: 1.6em;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        color: var(--primary-text-color);
+      }
+
+      .focus-timer.finished .focus-timer-text {
+        color: var(--error-color, #ef4444);
+      }
+
+      /* --- Actions --- */
+      .focus-deck-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1.4fr;
+        gap: 10px;
+      }
+
+      .focus-action {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        min-height: 64px;
+        padding: 10px;
+        border: none;
+        border-radius: 14px;
+        background: var(--secondary-background-color);
+        color: var(--primary-text-color);
+        font-size: 0.95em;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.12s;
+      }
+
+      .focus-action:active {
+        transform: scale(0.97);
+      }
+
+      .focus-action ha-icon {
+        --mdc-icon-size: 26px;
+      }
+
+      .focus-action.done {
+        background: #22c55e;
+        color: white;
+      }
+
+      .focus-card-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: auto;
+        padding-top: 4px;
+      }
+
+      .focus-mini-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 1;
+        min-height: 44px;
+        border: none;
+        border-radius: 10px;
+        background: var(--secondary-background-color);
+        color: var(--primary-text-color);
+        cursor: pointer;
+      }
+
+      .focus-mini-btn.done {
+        flex: 1.6;
+        background: #22c55e;
+        color: white;
+      }
+
+      .focus-mini-btn ha-icon {
+        --mdc-icon-size: 22px;
+      }
+
+      .focus-hint {
+        text-align: center;
+        font-size: 0.8em;
+        color: var(--secondary-text-color);
+      }
+
+      /* Swipe hints are meaningless without a touchscreen */
+      @media (hover: hover) and (pointer: fine) {
+        .focus-hint {
+          display: none;
+        }
+      }
+
+      /* --- Empty states --- */
+      .focus-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        padding: 40px 20px;
+        text-align: center;
+        color: var(--secondary-text-color);
+      }
+
+      .focus-empty ha-icon {
+        --mdc-icon-size: 56px;
+        color: var(--divider-color);
+      }
+
+      .focus-empty.done ha-icon {
+        color: #22c55e;
+      }
+
+      .focus-empty h3 {
+        margin: 0;
+        color: var(--primary-text-color);
+      }
+
+      .focus-empty p {
+        margin: 0;
+        max-width: 34ch;
+      }
+
+      .focus-empty-btn {
+        margin-top: 8px;
+        padding: 10px 18px;
+        border: 2px solid var(--primary-color);
+        border-radius: 10px;
+        background: transparent;
+        color: var(--primary-color);
+        font-size: 0.95em;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      /* --- Confetti --- */
+      .focus-confetti {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        pointer-events: none;
+        z-index: 5;
+      }
+
+      .focus-confetti span {
+        position: absolute;
+        top: -12px;
+        width: 9px;
+        height: 9px;
+        border-radius: 2px;
+        opacity: 0;
+        animation-name: focus-confetti-fall;
+        animation-timing-function: ease-in;
+        animation-fill-mode: forwards;
+      }
+
+      @keyframes focus-confetti-fall {
+        0% {
+          opacity: 1;
+          transform: translate(0, 0) rotate(0deg);
+        }
+        100% {
+          opacity: 0;
+          transform: translate(var(--drift, 0px), 320px) rotate(540deg);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .focus-confetti {
+          display: none;
+        }
+        .focus-progress-fill,
+        .focus-steps-fill,
+        .focus-timer-ring .ring-value,
+        .focus-action,
+        .focus-icon-btn {
+          transition: none;
+        }
+      }
     `;
   }
 }
@@ -6312,6 +8026,10 @@ class SimpleChoresCardEditor extends LitElement {
 
   get _default_view() {
     return this._config?.default_view || "list";
+  }
+
+  get _focus_layout() {
+    return this._config?.focus_layout || "auto";
   }
 
   get _my_chores_default() {
@@ -6359,6 +8077,20 @@ class SimpleChoresCardEditor extends LitElement {
           >
             <option value="list" ?selected=${this._default_view === "list"}>List View</option>
             <option value="calendar" ?selected=${this._default_view === "calendar"}>Calendar View</option>
+            <option value="focus" ?selected=${this._default_view === "focus"}>Focus View (chore book)</option>
+          </select>
+        </div>
+
+        <div class="option">
+          <label class="option-label">Focus View Layout</label>
+          <select
+            .value=${this._focus_layout}
+            .configValue=${"focus_layout"}
+            @change=${this._valueChanged}
+          >
+            <option value="auto" ?selected=${this._focus_layout === "auto"}>Auto (deck on phones, board on displays)</option>
+            <option value="deck" ?selected=${this._focus_layout === "deck"}>Always deck (one at a time)</option>
+            <option value="board" ?selected=${this._focus_layout === "board"}>Always board (grid)</option>
           </select>
         </div>
 
@@ -6418,7 +8150,11 @@ class SimpleChoresCardEditor extends LitElement {
           <p>
             <strong>Simple Chores Card</strong><br>
             Manage household chores with room filtering, calendar view,
-            user assignment, and completion tracking.
+            user assignment, and completion tracking.<br><br>
+            <strong>Focus View</strong> shows one chore at a time, filtered by
+            how much time you have, with a shuffle for when choosing is the
+            hard part. Add a time estimate and steps to a chore to get the
+            most out of it.
           </p>
         </div>
       </div>
@@ -6566,7 +8302,7 @@ initCard();
       window.customCards.push({
         type: "simple-chores-card",
         name: "Simple Chores Card",
-        description: "Manage household chores with room organization and completion tracking",
+        description: "Manage household chores with room organization, a focus view, and completion tracking",
         preview: true, // This enables preview in card picker
         documentationURL: "https://github.com/darthmario/simple-chores",
       });
@@ -6579,7 +8315,7 @@ initCard();
     window.customCardsRegistry["simple-chores-card"] = {
       type: "simple-chores-card",
       name: "Simple Chores Card",
-      description: "Manage household chores with room organization and completion tracking",
+      description: "Manage household chores with room organization, a focus view, and completion tracking",
       preview: true,
     };
 

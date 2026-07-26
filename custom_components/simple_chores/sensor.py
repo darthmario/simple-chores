@@ -93,30 +93,7 @@ class SimpleChoresDueTodaySensor(SimpleChoresBaseSensor):
         """Return additional state attributes."""
         if self.coordinator.data is None:
             return {}
-        chores = self.coordinator.data.get("due_today", [])
-        return {
-            "chores": [
-                {
-                    "id": c["id"],
-                    "name": c["name"],
-                    "room": c.get("room_name", "Unknown"),
-                    "room_id": c.get("room_id"),
-                    "frequency": c["frequency"],
-                    "assigned_to": c.get("assigned_to"),
-                    "next_due": c.get("next_due"),
-                    # Recurrence settings
-                    "recurrence_type": c.get("recurrence_type", "interval"),
-                    "anchor_days_of_week": c.get("anchor_days_of_week", []),
-                    "anchor_type": c.get("anchor_type"),
-                    "anchor_day_of_month": c.get("anchor_day_of_month"),
-                    "anchor_week": c.get("anchor_week"),
-                    "anchor_weekday": c.get("anchor_weekday"),
-                    "interval": c.get("interval", 1),
-                }
-                for c in chores
-            ],
-            "date": self.coordinator.data.get("today"),
-        }
+        return {"date": self.coordinator.data.get("today")}
 
 
 class SimpleChoresDueThisWeekSensor(SimpleChoresBaseSensor):
@@ -145,28 +122,7 @@ class SimpleChoresDueThisWeekSensor(SimpleChoresBaseSensor):
         """Return additional state attributes."""
         if self.coordinator.data is None:
             return {}
-        chores = self.coordinator.data.get("due_this_week", [])
         return {
-            "chores": [
-                {
-                    "id": c["id"],
-                    "name": c["name"],
-                    "room": c.get("room_name", "Unknown"),
-                    "room_id": c.get("room_id"),
-                    "frequency": c["frequency"],
-                    "next_due": c.get("next_due"),
-                    "assigned_to": c.get("assigned_to"),
-                    # Recurrence settings
-                    "recurrence_type": c.get("recurrence_type", "interval"),
-                    "anchor_days_of_week": c.get("anchor_days_of_week", []),
-                    "anchor_type": c.get("anchor_type"),
-                    "anchor_day_of_month": c.get("anchor_day_of_month"),
-                    "anchor_week": c.get("anchor_week"),
-                    "anchor_weekday": c.get("anchor_weekday"),
-                    "interval": c.get("interval", 1),
-                }
-                for c in chores
-            ],
             "period_start": self.coordinator.data.get("today"),
             "period_end": self.coordinator.data.get("seven_days_from_today"),
         }
@@ -199,30 +155,8 @@ class SimpleChoresOverdueSensor(SimpleChoresBaseSensor):
         if self.coordinator.data is None:
             return {}
         chores = self.coordinator.data.get("overdue", [])
-        chore_list = [
-            {
-                "id": c["id"],
-                "name": c["name"],
-                "room": c.get("room_name", "Unknown"),
-                "room_id": c.get("room_id"),
-                "frequency": c["frequency"],
-                "next_due": c["next_due"],
-                "days_overdue": c.get("days_overdue", 0),
-                "assigned_to": c.get("assigned_to"),
-                # Recurrence settings
-                "recurrence_type": c.get("recurrence_type", "interval"),
-                "anchor_days_of_week": c.get("anchor_days_of_week", []),
-                "anchor_type": c.get("anchor_type"),
-                "anchor_day_of_month": c.get("anchor_day_of_month"),
-                "anchor_week": c.get("anchor_week"),
-                "anchor_weekday": c.get("anchor_weekday"),
-                "interval": c.get("interval", 1),
-            }
-            for c in chores
-        ]
         return {
-            "chores": chore_list,
-            "max_days_overdue": max((c["days_overdue"] for c in chore_list), default=0),
+            "max_days_overdue": max((c.get("days_overdue", 0) for c in chores), default=0),
         }
 
 
@@ -255,42 +189,28 @@ class SimpleChoresTotalSensor(SimpleChoresBaseSensor):
 
         # Get all chores from the coordinator data
         all_chores = self.coordinator.data.get("chores", [])
-        history = self.coordinator.store.history
 
-        _LOGGER.debug(
-            "Total sensor attributes: %d chores, %d history entries",
-            len(all_chores),
-            len(history),
-        )
+        _LOGGER.debug("Total sensor attributes: %d chores", len(all_chores))
 
         return {
-            "chores": [
-                {
-                    "id": c["id"],
-                    "name": c["name"],
-                    "room_id": c.get("room_id"),
-                    "room_name": c.get("room_name", "Unknown"),
-                    "frequency": c["frequency"],
-                    "next_due": c["next_due"],
-                    "last_completed": c.get("last_completed"),
-                    "last_completed_by": c.get("last_completed_by"),
-                    "created_at": c.get("created_at"),
-                    "assigned_to": c.get("assigned_to"),
-                    # Recurrence settings
-                    "recurrence_type": c.get("recurrence_type", "interval"),
-                    "anchor_days_of_week": c.get("anchor_days_of_week", []),
-                    "anchor_type": c.get("anchor_type"),
-                    "anchor_day_of_month": c.get("anchor_day_of_month"),
-                    "anchor_week": c.get("anchor_week"),
-                    "anchor_weekday": c.get("anchor_weekday"),
-                    "interval": c.get("interval", 1),
-                }
-                for c in all_chores
-            ],
             "total_count": len(all_chores),
-            "completion_history": history,
+            # Chores are served over the simple_chores/chores websocket command
+            # rather than published here - the list outgrew the 16 KB attribute
+            # limit. This digest tells the card when its copy is stale.
+            "revision": self.coordinator.data.get("revision", ""),
+            # Raw completion history is NOT published here. It grew without
+            # bound and pushed this attribute past the recorder's 16 KB limit,
+            # so the card reads these summaries instead and fetches raw entries
+            # on demand via the simple_chores/history websocket command.
+            "statistics": self.coordinator.data.get("statistics", {}),
             "rooms": [
-                {"id": r["id"], "name": r["name"], "is_custom": r.get("is_custom", False)}
+                {
+                    "id": r["id"],
+                    "name": r["name"],
+                    # The focus view badges each card with its room icon
+                    "icon": r.get("icon", "mdi:home"),
+                    "is_custom": r.get("is_custom", False),
+                }
                 for r in self.coordinator.data.get("rooms", [])
             ],
             "users": self.coordinator.data.get("users", []),

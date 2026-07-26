@@ -58,6 +58,15 @@ A comprehensive Home Assistant custom integration for tracking household chores 
 - **Calendar Events**: Each chore creates calendar entries with room and frequency info
 - **Edit from Calendar**: Click calendar events to edit chore details
 
+### **Focus View (ADHD-friendly "chore book")**
+- **One at a Time**: A deck showing a single chore, so the list can't overwhelm you
+- **Time Budget**: "I have 5 minutes" chips filter to chores that actually fit
+- **Shuffle**: A dice button picks one for you when deciding is the hard part
+- **Micro-Steps**: Break a chore into small steps and tick them off; progress is shared across devices
+- **Built-in Timer**: Tap the time chip to start a countdown on the card
+- **Visible Reward**: Confetti on completion, a "done today" bar, and a daily streak
+- **Board Layout**: Grid of large touch targets for a shared wall display
+
 ### **Modern UI & UX**
 - **Custom Lovelace Card**: Beautiful, responsive interface
 - **Calendar View**: Visual calendar with agenda sidebar
@@ -112,6 +121,60 @@ The integration creates the following entities:
 | `calendar.simple_chores` | Calendar | Calendar view of all chores |
 
 > **Note:** Sensor entity IDs are defined in `const.py` and used consistently by both the backend and the Lovelace card.
+
+### How the card gets its data
+
+State attributes are pushed to every connected client on every update, and
+Home Assistant caps them at 16 KB. Anything that grows with the number of
+chores or completions is therefore served over the websocket instead, and the
+sensors carry only fixed-size data:
+
+| | where it lives |
+|---|---|
+| Counts, rooms, users | state attributes |
+| Completion statistics | `statistics` attribute — fixed size (~1.6 KB) |
+| Change signal | `revision` attribute — a digest of the chore data |
+| The chore list | `simple_chores/chores` websocket command |
+| Raw completion history | `simple_chores/history` websocket command |
+
+`sensor.total_chores` is about **1.9 KB regardless of how many chores or
+completions you have**. The card fetches the chore list once, then re-fetches
+only when `revision` changes.
+
+#### `simple_chores/chores` (websocket)
+
+```js
+const data = await hass.callWS({ type: "simple_chores/chores" });
+// { revision, chores: [...], due_today: [id], due_this_week: [id],
+//   overdue: [id], today, seven_days_from_today }
+```
+
+Due windows come back as ID lists rather than repeated chore objects — an
+overdue chore appears in three of them, and duplicating the full record three
+times is what made this data too large in the first place. Categorising
+server-side also keeps a single definition of "due today".
+
+#### `simple_chores/history` (websocket)
+
+```js
+const { history, count } = await hass.callWS({
+  type: "simple_chores/history",
+  limit: 300,   // optional, defaults to EXPOSED_HISTORY_ENTRIES
+});
+```
+
+Recent completions, newest first, capped by `EXPOSED_HISTORY_ENTRIES` /
+`EXPOSED_HISTORY_DAYS` in `const.py`. Storage keeps the full
+`MAX_HISTORY_ENTRIES` (1000). Only the calendar and the history modal fetch
+this.
+
+#### Rendering at scale
+
+The list view, the All Chores modal and the focus board all page rather than
+rendering every chore at once (`DEFAULT_CHORE_LIMIT`, `FOCUS_BOARD_LIMIT` in
+the card), so a large chore list doesn't put hundreds of card subtrees on a
+wall display.
+
 
 ## Services
 
@@ -277,6 +340,18 @@ data:
   chore_id: "abc123"
 ```
 
+#### `simple_chores.toggle_chore_step`
+Tick or untick one micro-step on a chore. Progress is stored server-side, so a chore
+started on a phone shows the same state on the wall display.
+
+```yaml
+service: simple_chores.toggle_chore_step
+data:
+  chore_id: "abc123"
+  step_index: 0        # counting from 0
+  completed: true      # optional; omit to flip the current value
+```
+
 #### `simple_chores.remove_chore`
 Delete a chore.
 
@@ -349,7 +424,8 @@ A beautiful custom card is **automatically installed** with the integration!
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `title` | string | `"Simple Chores"` | Custom card title |
-| `default_view` | string | `"list"` | Default view: `"list"` or `"calendar"` |
+| `default_view` | string | `"list"` | Default view: `"list"`, `"calendar"` or `"focus"` |
+| `focus_layout` | string | `"auto"` | Focus view layout: `"auto"`, `"deck"` (one at a time) or `"board"` (grid) |
 | `full_width` | boolean | `false` | Make card span full column width |
 | `compact_mode` | boolean | `false` | Reduced padding for smaller displays |
 | `hide_stats` | boolean | `false` | Hide the stats bar |
@@ -362,6 +438,7 @@ A beautiful custom card is **automatically installed** with the integration!
 #### **Smart Views**
 - **List View**: Traditional list grouped by due date
 - **Calendar View**: Monthly calendar with agenda sidebar
+- **Focus View**: One chore at a time (deck) or a grid of big cards (board)
 - **Due Today**: Immediate action items with urgency indicators
 - **Due in Next 7 Days**: Rolling 7-day lookahead for planning
 - **All Active Chores**: Comprehensive modal with all chores and actions
@@ -380,6 +457,55 @@ A beautiful custom card is **automatically installed** with the integration!
 - **Due Date Indicators**: Visual dots showing chores due on each day
 - **Agenda Sidebar**: List of chores due on selected date
 - **Click to Edit**: Select calendar events to edit chore details
+
+### Focus View
+
+The focus view is built for the times when a list of chores is the problem rather
+than the solution. It shows what's due now (overdue chores included), most overdue
+first, then quickest first.
+
+**Layouts** — `deck` shows one chore at a time with Later / Skip / Done buttons and
+swipe support (right to finish, left for later). `board` shows every chore as a grid
+of large touch targets. With `focus_layout: auto` the card picks based on its own
+width: deck under 500px, board above.
+
+**Time budget** — the chip row filters to chores that fit the time you have. Chores
+without a time estimate are deliberately excluded from a budget, since an unmeasured
+chore can't be promised to fit in five minutes. Any card missing an estimate shows a
+**How long?** button that saves one in a tap, so estimates fill in as you use it.
+
+**Micro-steps** — add up to 12 short steps to a chore and they render as a checklist
+with a progress bar. Ticks are saved to the backend, so a chore started on one phone
+shows as part-done on the display. Progress resets when the chore is completed or
+skipped, but survives a snooze.
+
+**Setting it up for a wall display:**
+
+```yaml
+type: custom:simple-chores-card
+title: Family Chores
+full_width: true
+default_view: focus
+focus_layout: board
+```
+
+A ready-made panel dashboard is in [`dashboards/chores-display.yaml`](dashboards/chores-display.yaml).
+
+Add time estimates and steps from the normal Add / Edit Chore forms, or via
+`add_chore` / `update_chore`:
+
+```yaml
+service: simple_chores.add_chore
+data:
+  name: "Load the dishwasher"
+  room_id: "area_kitchen"
+  frequency: "daily"
+  estimated_minutes: 5
+  steps:
+    - "Clear the counter"
+    - "Rinse and load"
+    - "Start it"
+```
 
 ### Automatic Cache Busting
 
@@ -482,6 +608,9 @@ pytest tests/ -v
 
 # Run with coverage
 pytest tests/ --cov=custom_components/simple_chores --cov-report=term-missing
+
+# Run the Lovelace card tests (no dependencies beyond Node)
+node tests/js/focus-view.test.mjs
 ```
 
 ### Code Quality

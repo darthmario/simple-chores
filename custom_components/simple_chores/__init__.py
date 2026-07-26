@@ -25,6 +25,8 @@ from .const import (
     ATTR_AVATAR,
     ATTR_CHORE_ID,
     ATTR_CHORE_NAME,
+    ATTR_COMPLETED,
+    ATTR_ESTIMATED_MINUTES,
     ATTR_FREQUENCY,
     ATTR_ICON,
     ATTR_INTERVAL,
@@ -33,10 +35,13 @@ from .const import (
     ATTR_ROOM_ID,
     ATTR_ROOM_NAME,
     ATTR_START_DATE,
+    ATTR_STEP_INDEX,
+    ATTR_STEPS,
     ATTR_USER_ID,
     ATTR_USER_NAME,
     DOMAIN,
     FREQUENCIES,
+    MAX_ESTIMATED_MINUTES,
     RECURRENCE_TYPES,
     SERVICE_ADD_CHORE,
     SERVICE_ADD_ROOM,
@@ -50,6 +55,7 @@ from .const import (
     SERVICE_SEND_NOTIFICATION,
     SERVICE_SKIP_CHORE,
     SERVICE_SNOOZE_CHORE,
+    SERVICE_TOGGLE_CHORE_STEP,
     SERVICE_UPDATE_CHORE,
     SERVICE_UPDATE_ROOM,
     SERVICE_UPDATE_USER,
@@ -63,6 +69,7 @@ from .notifications import (
     async_setup_notification_scheduler,
 )
 from .store import SimpleChoresStore
+from .websocket import async_register_websocket_api
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -85,10 +92,15 @@ ALL_SERVICES: tuple[str, ...] = (
     SERVICE_COMPLETE_CHORE,
     SERVICE_SKIP_CHORE,
     SERVICE_SNOOZE_CHORE,
+    SERVICE_TOGGLE_CHORE_STEP,
     SERVICE_GET_HISTORY,
     SERVICE_GET_USER_STATS,
     SERVICE_SEND_NOTIFICATION,
 )
+
+# Reused by add_chore and update_chore
+_ESTIMATED_MINUTES_VALIDATOR = vol.All(vol.Coerce(int), vol.Range(min=0, max=MAX_ESTIMATED_MINUTES))
+_STEPS_VALIDATOR = vol.All(cv.ensure_list, [cv.string])
 
 # Service schemas
 SERVICE_ADD_ROOM_SCHEMA = vol.Schema(
@@ -148,6 +160,9 @@ SERVICE_ADD_CHORE_SCHEMA = vol.Schema(
         vol.Optional(ATTR_ANCHOR_WEEK): vol.In(WEEK_ORDINALS),
         vol.Optional(ATTR_ANCHOR_WEEKDAY): vol.In(WEEKDAYS),
         vol.Optional(ATTR_INTERVAL): vol.All(vol.Coerce(int), vol.Range(min=1)),
+        # Focus view options
+        vol.Optional(ATTR_ESTIMATED_MINUTES): _ESTIMATED_MINUTES_VALIDATOR,
+        vol.Optional(ATTR_STEPS): _STEPS_VALIDATOR,
     }
 )
 
@@ -173,6 +188,17 @@ SERVICE_UPDATE_CHORE_SCHEMA = vol.Schema(
         vol.Optional(ATTR_ANCHOR_WEEK): vol.In(WEEK_ORDINALS),
         vol.Optional(ATTR_ANCHOR_WEEKDAY): vol.In(WEEKDAYS),
         vol.Optional(ATTR_INTERVAL): vol.All(vol.Coerce(int), vol.Range(min=1)),
+        # Focus view options (0 minutes clears an estimate, [] clears the steps)
+        vol.Optional(ATTR_ESTIMATED_MINUTES): _ESTIMATED_MINUTES_VALIDATOR,
+        vol.Optional(ATTR_STEPS): _STEPS_VALIDATOR,
+    }
+)
+
+SERVICE_TOGGLE_CHORE_STEP_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_CHORE_ID): cv.string,
+        vol.Required(ATTR_STEP_INDEX): vol.All(vol.Coerce(int), vol.Range(min=0)),
+        vol.Optional(ATTR_COMPLETED): cv.boolean,
     }
 )
 
@@ -232,6 +258,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Register services
     await _async_setup_services(hass, coordinator)
+
+    # Serve completion history on demand instead of in a state attribute
+    async_register_websocket_api(hass)
 
     # Set up notification scheduler and action listener
     await async_setup_notification_scheduler(hass, entry, coordinator)
@@ -360,6 +389,9 @@ class ServiceHandlerFactory:
                 anchor_week = call.data.get(ATTR_ANCHOR_WEEK)
                 anchor_weekday = call.data.get(ATTR_ANCHOR_WEEKDAY)
                 interval = call.data.get(ATTR_INTERVAL)
+                # Focus view fields
+                estimated_minutes = call.data.get(ATTR_ESTIMATED_MINUTES)
+                steps = call.data.get(ATTR_STEPS)
 
                 if operation == "add":
                     await self.coordinator.async_add_chore(
@@ -375,6 +407,8 @@ class ServiceHandlerFactory:
                         anchor_week,
                         anchor_weekday,
                         interval,
+                        estimated_minutes,
+                        steps,
                     )
                     _LOGGER.info("Successfully added chore: %s", name)
                 elif operation == "remove":
@@ -395,6 +429,8 @@ class ServiceHandlerFactory:
                         anchor_week,
                         anchor_weekday,
                         interval,
+                        estimated_minutes,
+                        steps,
                     )
                     _LOGGER.info("Successfully updated chore: %s", chore_id)
                 elif operation == "complete":
@@ -409,6 +445,11 @@ class ServiceHandlerFactory:
                 elif operation == "snooze":
                     await self.coordinator.async_snooze_chore(chore_id)
                     _LOGGER.info("Successfully snoozed chore: %s", chore_id)
+                elif operation == "toggle_step":
+                    step_index = call.data[ATTR_STEP_INDEX]
+                    completed = call.data.get(ATTR_COMPLETED)
+                    await self.coordinator.async_toggle_chore_step(chore_id, step_index, completed)
+                    _LOGGER.debug("Toggled step %s on chore: %s", step_index, chore_id)
             except ValueError as e:
                 _LOGGER.error("Validation error in %s_chore: %s", operation, e)
                 raise HomeAssistantError(f"Invalid input: {e}") from e
@@ -482,6 +523,11 @@ async def _async_setup_services(hass: HomeAssistant, coordinator: SimpleChoresCo
         (SERVICE_COMPLETE_CHORE, factory.create_chore_handler("complete"), SERVICE_COMPLETE_CHORE_SCHEMA),
         (SERVICE_SKIP_CHORE, factory.create_chore_handler("skip"), SERVICE_SKIP_CHORE_SCHEMA),
         (SERVICE_SNOOZE_CHORE, factory.create_chore_handler("snooze"), SERVICE_SNOOZE_CHORE_SCHEMA),
+        (
+            SERVICE_TOGGLE_CHORE_STEP,
+            factory.create_chore_handler("toggle_step"),
+            SERVICE_TOGGLE_CHORE_STEP_SCHEMA,
+        ),
         # Data services
         (SERVICE_GET_HISTORY, factory.create_data_handler("history"), SERVICE_GET_HISTORY_SCHEMA),
         (SERVICE_GET_USER_STATS, factory.create_data_handler("stats"), None),

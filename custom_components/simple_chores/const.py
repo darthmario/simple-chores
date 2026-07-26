@@ -100,6 +100,7 @@ SERVICE_UPDATE_CHORE: Final = "update_chore"
 SERVICE_COMPLETE_CHORE: Final = "complete_chore"
 SERVICE_SKIP_CHORE: Final = "skip_chore"
 SERVICE_SNOOZE_CHORE: Final = "snooze_chore"
+SERVICE_TOGGLE_CHORE_STEP: Final = "toggle_chore_step"
 SERVICE_GET_HISTORY: Final = "get_history"
 SERVICE_GET_USER_STATS: Final = "get_user_stats"
 SERVICE_SEND_NOTIFICATION: Final = "send_due_notification"
@@ -117,6 +118,12 @@ ATTR_AVATAR: Final = "avatar"
 ATTR_ASSIGNED_TO: Final = "assigned_to"
 ATTR_START_DATE: Final = "start_date"
 ATTR_NEXT_DUE: Final = "next_due"
+
+# Focus view ("chore book") attributes
+ATTR_ESTIMATED_MINUTES: Final = "estimated_minutes"
+ATTR_STEPS: Final = "steps"
+ATTR_STEP_INDEX: Final = "step_index"
+ATTR_COMPLETED: Final = "completed"
 
 # Recurrence attributes
 ATTR_RECURRENCE_TYPE: Final = "recurrence_type"
@@ -145,7 +152,26 @@ NOTIFY_DAYS_OPTIONS: Final = [0, 1, 2, 3, 7]  # Today, 1 day, 2 days, 3 days, 1 
 MAX_ROOM_NAME_LENGTH: Final = 50
 MAX_CHORE_NAME_LENGTH: Final = 100
 MAX_HISTORY_ENTRIES: Final = 1000
+# Raw history is no longer published as a state attribute - it is served on
+# demand over the websocket (see websocket.py) and summarised into the
+# "statistics" attribute (see statistics.py). This caps a single fetch.
+EXPOSED_HISTORY_ENTRIES: Final = 300
+EXPOSED_HISTORY_DAYS: Final = 365
+
+# Statistics periods offered by the card's stats dashboard. Kept in step with
+# STATS_PERIODS in simple-chores-card.js; the backend counts the buckets and
+# the card formats their labels so date formatting stays locale-aware.
+STATS_PERIODS: Final = {
+    "7d": {"group_by": "day", "buckets": 7},
+    "4w": {"group_by": "week", "buckets": 4},
+    "3m": {"group_by": "month", "buckets": 3},
+    "1y": {"group_by": "month", "buckets": 12},
+}
+TOP_CHORES_LIMIT: Final = 5
 MAX_CALENDAR_EVENTS: Final = 100  # Maximum events to generate per chore in calendar
+MAX_ESTIMATED_MINUTES: Final = 480  # 8 hours - anything longer isn't a single chore
+MAX_STEPS_PER_CHORE: Final = 12  # Beyond this a chore should be split up
+MAX_STEP_LENGTH: Final = 100
 
 # Sensor Entity IDs (used by both backend and frontend card)
 SENSOR_DUE_TODAY: Final = "sensor.chores_due_today"

@@ -36,3 +36,6 @@ env/
 
 # Deploy
 deploy.env
+
+# Claude Code local settings (personal, per-machine)
+.claude/settings.local.json

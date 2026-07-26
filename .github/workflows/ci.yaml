@@ -52,6 +52,24 @@ jobs:
       - name: Run mypy
         run: mypy custom_components/simple_chores --config-file pyproject.toml
 
+  card-test:
+    name: Card Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check card syntax
+        run: node --check custom_components/simple_chores/www/simple-chores-card.js
+
+      - name: Run focus view tests
+        run: node tests/js/focus-view.test.mjs
+
   test:
     name: Test
     runs-on: ubuntu-latest

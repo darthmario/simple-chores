@@ -337,3 +337,75 @@ class TestRoomAndUserManagement:
         chore = await coordinator.async_add_chore("Vacuum", "area_kitchen", "weekly")
         assert await coordinator.async_remove_chore(chore["id"]) is True
         assert await coordinator.async_remove_chore(chore["id"]) is False
+
+
+class TestRevision:
+    """The card re-fetches its chore list when this digest moves, so it has to
+    change for anything the card renders - and not change otherwise."""
+
+    async def test_present_and_stable_across_identical_updates(self, coordinator, store):
+        store.add_chore("Vacuum", "area_kitchen", "weekly", start_date=TODAY)
+        first = (await coordinator._async_update_data())["revision"]
+        second = (await coordinator._async_update_data())["revision"]
+        assert first
+        assert first == second, "an unchanged chore list must not force a re-fetch"
+
+    async def test_changes_when_a_chore_is_added(self, coordinator, store):
+        store.add_chore("Vacuum", "area_kitchen", "weekly", start_date=TODAY)
+        before = (await coordinator._async_update_data())["revision"]
+        store.add_chore("Dishes", "area_kitchen", "daily", start_date=TODAY)
+        assert (await coordinator._async_update_data())["revision"] != before
+
+    async def test_changes_when_a_chore_is_removed(self, coordinator, store):
+        chore = store.add_chore("Vacuum", "area_kitchen", "weekly", start_date=TODAY)
+        before = (await coordinator._async_update_data())["revision"]
+        store.remove_chore(chore["id"])
+        assert (await coordinator._async_update_data())["revision"] != before
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("name", "Renamed"),
+            ("estimated_minutes", 15),
+            ("steps", ["one", "two"]),
+            ("assigned_to", "u2"),
+            ("frequency", "daily"),
+        ],
+    )
+    async def test_changes_when_a_rendered_field_changes(self, coordinator, store, field, value):
+        chore = store.add_chore("Vacuum", "area_kitchen", "weekly", start_date=TODAY)
+        before = (await coordinator._async_update_data())["revision"]
+        store.update_chore(chore["id"], **{field: value})
+        assert (await coordinator._async_update_data())["revision"] != before, f"{field} must bust the cache"
+
+    async def test_changes_when_step_progress_moves(self, coordinator, store):
+        chore = store.add_chore("Vacuum", "area_kitchen", "weekly", start_date=TODAY, steps=["a", "b"])
+        before = (await coordinator._async_update_data())["revision"]
+        store.toggle_chore_step(chore["id"], 0)
+        # Ticking a step on one device has to show up on the others
+        assert (await coordinator._async_update_data())["revision"] != before
+
+    async def test_changes_when_a_chore_is_completed(self, coordinator, store):
+        chore = store.add_chore("Vacuum", "area_kitchen", "weekly", start_date=TODAY)
+        before = (await coordinator._async_update_data())["revision"]
+        await coordinator.async_complete_chore(chore["id"], "u1")
+        assert (await coordinator._async_update_data())["revision"] != before
+
+    async def test_empty_chore_list_still_has_a_revision(self, coordinator):
+        assert (await coordinator._async_update_data())["revision"]
+
+
+class TestStatisticsInData:
+    async def test_statistics_are_attached(self, coordinator, store):
+        chore = store.add_chore("Vacuum", "area_kitchen", "weekly", start_date=TODAY)
+        store.complete_chore(chore["id"], "u1", "Nate", next_due=date(2024, 6, 22))
+        stats = (await coordinator._async_update_data())["statistics"]
+        assert stats["done_today"] == 1
+        assert stats["streak_days"] == 1
+        assert stats["total_completions"] == 1
+        assert stats["by_room"][0]["name"] == "Kitchen"
+
+    async def test_statistics_present_with_no_history(self, coordinator):
+        stats = (await coordinator._async_update_data())["statistics"]
+        assert stats["total_completions"] == 0
+        assert stats["done_today"] == 0

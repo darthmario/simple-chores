@@ -16,6 +16,8 @@ from .const import (
     ANCHOR_DAY_OF_MONTH,
     ANCHOR_TYPES,
     ANCHOR_WEEK_PATTERN,
+    EXPOSED_HISTORY_DAYS,
+    EXPOSED_HISTORY_ENTRIES,
     FREQUENCIES,
     FREQUENCY_BIANNUAL,
     FREQUENCY_BIMONTHLY,
@@ -25,8 +27,11 @@ from .const import (
     FREQUENCY_WEEKLY,
     FREQUENCY_YEARLY,
     MAX_CHORE_NAME_LENGTH,
+    MAX_ESTIMATED_MINUTES,
     MAX_HISTORY_ENTRIES,
     MAX_ROOM_NAME_LENGTH,
+    MAX_STEP_LENGTH,
+    MAX_STEPS_PER_CHORE,
     RECURRENCE_ANCHORED,
     RECURRENCE_INTERVAL,
     RECURRENCE_TYPES,
@@ -113,6 +118,13 @@ class SimpleChoresStore:
             # Ensure is_completed exists
             if "is_completed" not in chore:
                 chore["is_completed"] = False
+            # Focus view fields: no estimate is a valid state, steps default to empty
+            if "estimated_minutes" not in chore:
+                chore["estimated_minutes"] = None
+            if "steps" not in chore:
+                chore["steps"] = []
+            if "step_progress" not in chore:
+                chore["step_progress"] = []
         if migrated:
             _LOGGER.info("Migrated %d chore(s) with missing recurrence fields", migrated)
 
@@ -295,6 +307,8 @@ class SimpleChoresStore:
         anchor_week: int | None = None,
         anchor_weekday: int | None = None,
         interval: int | None = None,
+        estimated_minutes: int | None = None,
+        steps: list[str] | None = None,
     ) -> dict[str, Any]:
         """Add a new chore."""
         # Input validation
@@ -334,6 +348,10 @@ class SimpleChoresStore:
         if interval < 1:
             raise ValueError("Interval must be at least 1")
 
+        # Focus view fields
+        estimated_minutes = self._validate_estimated_minutes(estimated_minutes)
+        steps = self._validate_steps(steps)
+
         chore_id = uuid.uuid4().hex[:8]
         next_due = start_date or dt_util.now().date()
         chore = {
@@ -355,6 +373,10 @@ class SimpleChoresStore:
             "anchor_day_of_month": anchor_day_of_month,
             "anchor_week": anchor_week,
             "anchor_weekday": anchor_weekday,
+            # Focus view fields
+            "estimated_minutes": estimated_minutes,
+            "steps": steps,
+            "step_progress": [],
         }
 
         # Debug logging for assignment
@@ -406,6 +428,47 @@ class SimpleChoresStore:
             # For now, we'll use the start_date's month as the anchor month
             pass
 
+    @staticmethod
+    def _validate_estimated_minutes(estimated_minutes: Any) -> int | None:
+        """Normalize an estimated duration.
+
+        None means "no estimate"; 0 is accepted as an explicit way to clear one.
+        """
+        if estimated_minutes is None:
+            return None
+        try:
+            minutes = int(estimated_minutes)
+        except (TypeError, ValueError) as err:
+            raise ValueError(
+                f"estimated_minutes must be a whole number of minutes, got: {estimated_minutes!r}"
+            ) from err
+        if minutes == 0:
+            return None
+        if minutes < 0 or minutes > MAX_ESTIMATED_MINUTES:
+            raise ValueError(f"estimated_minutes must be between 1 and {MAX_ESTIMATED_MINUTES} (or 0 to clear)")
+        return minutes
+
+    @staticmethod
+    def _validate_steps(steps: Any) -> list[str]:
+        """Normalize a chore's micro-steps, dropping blanks."""
+        if steps is None:
+            return []
+        if isinstance(steps, str) or not isinstance(steps, (list, tuple)):
+            raise ValueError("steps must be a list of short text steps")
+
+        cleaned: list[str] = []
+        for raw_step in steps:
+            text = str(raw_step).strip()
+            if not text:
+                continue
+            if len(text) > MAX_STEP_LENGTH:
+                raise ValueError(f"Step text too long (max {MAX_STEP_LENGTH} characters): {text[:30]}...")
+            cleaned.append(text)
+
+        if len(cleaned) > MAX_STEPS_PER_CHORE:
+            raise ValueError(f"Too many steps (max {MAX_STEPS_PER_CHORE}). Consider splitting this into two chores.")
+        return cleaned
+
     def update_chore(
         self,
         chore_id: str,
@@ -421,8 +484,14 @@ class SimpleChoresStore:
         anchor_week: int | None = None,
         anchor_weekday: int | None = None,
         interval: int | None = None,
+        estimated_minutes: int | None = None,
+        steps: list[str] | None = None,
     ) -> dict[str, Any] | None:
-        """Update an existing chore."""
+        """Update an existing chore.
+
+        Omitted fields are left unchanged. Pass estimated_minutes=0 to clear an
+        estimate and steps=[] to clear the step list.
+        """
         if chore_id not in self._data["chores"]:
             return None
 
@@ -444,6 +513,12 @@ class SimpleChoresStore:
         # leave the chore partially modified
         if interval is not None and interval < 1:
             raise ValueError("Interval must be at least 1")
+
+        # Same for the focus view fields - validate up front, assign later
+        validated_minutes = (
+            self._validate_estimated_minutes(estimated_minutes) if estimated_minutes is not None else None
+        )
+        validated_steps = self._validate_steps(steps) if steps is not None else None
 
         chore = self._data["chores"][chore_id]
 
@@ -491,6 +566,14 @@ class SimpleChoresStore:
         if anchor_weekday is not None:
             chore["anchor_weekday"] = anchor_weekday
 
+        # Focus view fields
+        if estimated_minutes is not None:
+            chore["estimated_minutes"] = validated_minutes
+        if validated_steps is not None:
+            chore["steps"] = validated_steps
+            # Indices past the end of the new list no longer refer to anything
+            chore["step_progress"] = [i for i in chore.get("step_progress", []) if i < len(validated_steps)]
+
         # Ensure recurrence fields exist for backwards compatibility
         if "recurrence_type" not in chore:
             chore["recurrence_type"] = RECURRENCE_INTERVAL
@@ -523,6 +606,8 @@ class SimpleChoresStore:
         # Update chore
         chore["last_completed"] = now.date().isoformat()
         chore["last_completed_by"] = user_id
+        # The next occurrence starts with a fresh checklist
+        chore["step_progress"] = []
 
         if next_due is None:
             # One-off chore - mark as completed permanently
@@ -580,6 +665,41 @@ class SimpleChoresStore:
             return None
         chore = self._data["chores"][chore_id]
         chore["next_due"] = next_due.isoformat()
+        # Skipping abandons this occurrence, so any part-done checklist goes with it
+        chore["step_progress"] = []
+        return chore
+
+    def toggle_chore_step(self, chore_id: str, step_index: int, completed: bool | None = None) -> dict[str, Any] | None:
+        """Tick or untick one micro-step on a chore.
+
+        Progress is stored server-side so a chore started on a phone shows the
+        same state on the wall display. Pass completed to set it explicitly,
+        or leave it None to flip the current value.
+        """
+        if chore_id not in self._data["chores"]:
+            return None
+
+        chore = self._data["chores"][chore_id]
+        steps = chore.get("steps") or []
+        if step_index < 0 or step_index >= len(steps):
+            raise ValueError(f"step_index {step_index} is out of range for a chore with {len(steps)} step(s)")
+
+        progress = set(chore.get("step_progress") or [])
+        should_complete = step_index not in progress if completed is None else bool(completed)
+        if should_complete:
+            progress.add(step_index)
+        else:
+            progress.discard(step_index)
+
+        chore["step_progress"] = sorted(progress)
+        _LOGGER.debug(
+            "Chore '%s' step %d -> %s (%d/%d done)",
+            chore["name"],
+            step_index,
+            "done" if should_complete else "todo",
+            len(progress),
+            len(steps),
+        )
         return chore
 
     def snooze_chore(self, chore_id: str) -> dict[str, Any] | None:
@@ -592,6 +712,39 @@ class SimpleChoresStore:
         chore["next_due"] = new_due.isoformat()
         _LOGGER.info("Snoozed chore '%s' from %s to %s", chore["name"], current_due, new_due)
         return chore
+
+    def get_recent_history(
+        self,
+        max_entries: int = EXPOSED_HISTORY_ENTRIES,
+        max_age_days: int = EXPOSED_HISTORY_DAYS,
+    ) -> list[dict[str, Any]]:
+        """Return a trimmed copy of the history for publishing as entity attributes.
+
+        The full history stays in storage; this only bounds what gets pushed to
+        every connected client on each state update. Entries are appended in
+        chronological order, so the tail is the most recent.
+        """
+        history = self._data.get("history", [])
+        recent = history[-max_entries:] if max_entries > 0 else []
+        cutoff = dt_util.now() - timedelta(days=max_age_days)
+
+        trimmed: list[dict[str, Any]] = []
+        for entry in recent:
+            completed_at = dt_util.parse_datetime(entry.get("completed_at") or "")
+            # Keep anything we can't confidently place in time rather than
+            # silently dropping it
+            if completed_at is not None and completed_at.tzinfo is not None and completed_at < cutoff:
+                continue
+            # "id" is never read by any consumer, so it is pure payload
+            trimmed.append({k: v for k, v in entry.items() if k != "id"})
+
+        if len(trimmed) < len(history):
+            _LOGGER.debug(
+                "Publishing %d of %d history entries as attributes",
+                len(trimmed),
+                len(history),
+            )
+        return trimmed
 
     def get_chore_history(self, chore_id: str) -> list[dict[str, Any]]:
         """Get completion history for a specific chore."""

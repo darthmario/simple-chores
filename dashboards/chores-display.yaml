@@ -4,8 +4,12 @@ views:
     path: default_view
     type: panel
     cards:
+      # Wall display (Cozyla): open straight into the focus view as a board of
+      # big touch targets. Swap focus_layout to "deck" for a one-at-a-time
+      # "what should I do next" kiosk instead.
       - type: custom:simple-chores-card
         title: Family Chores
         full_width: true
         hide_stats: false
-        default_view: list
+        default_view: focus
+        focus_layout: board

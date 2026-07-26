@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from datetime import date, timedelta
 from typing import TYPE_CHECKING, Any
@@ -17,6 +19,7 @@ from .const import (
     ROOM_PREFIX_AREA,
 )
 from .recurrence import calculate_next_due_for_chore
+from .statistics import build_statistics
 from .store import SimpleChoresStore
 
 if TYPE_CHECKING:
@@ -24,6 +27,18 @@ if TYPE_CHECKING:
     from homeassistant.helpers.area_registry import AreaRegistry
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _revision_of(chores: list[dict[str, Any]]) -> str:
+    """Fingerprint the chore data so clients can tell when it changed.
+
+    Chores are served over the websocket rather than published as a state
+    attribute (they outgrew the 16 KB limit), so the card needs a cheap signal
+    telling it it's holding a stale copy. Covers everything the card renders,
+    including days_overdue - which moves on its own each night.
+    """
+    payload = json.dumps(chores, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -129,6 +144,11 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "users": all_users,
             "chores": all_active_chores,
             "total_chores": len(all_active_chores),
+            # Summarised once per update rather than by every connected client
+            "statistics": build_statistics(self.store.history, all_active_chores, all_rooms, today),
+            # Published as a state attribute so the card knows when to re-fetch
+            # the chore list over the websocket
+            "revision": _revision_of(all_active_chores),
         }
 
         _LOGGER.debug(
@@ -340,6 +360,8 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         anchor_week: int | None = None,
         anchor_weekday: int | None = None,
         interval: int | None = None,
+        estimated_minutes: int | None = None,
+        steps: list[str] | None = None,
     ) -> dict[str, Any]:
         """Add a new chore."""
         # Validate room exists before creating chore
@@ -370,6 +392,8 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             anchor_week,
             anchor_weekday,
             interval,
+            estimated_minutes,
+            steps,
         )
         _LOGGER.info("Coordinator: Created chore data: %s", chore)
         await self.store.async_save_debounced()  # Use debounced save for performance
@@ -391,6 +415,8 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         anchor_week: int | None = None,
         anchor_weekday: int | None = None,
         interval: int | None = None,
+        estimated_minutes: int | None = None,
+        steps: list[str] | None = None,
     ) -> dict[str, Any] | None:
         """Update an existing chore."""
         # Validate room exists if room_id is being updated
@@ -417,9 +443,22 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             anchor_week,
             anchor_weekday,
             interval,
+            estimated_minutes,
+            steps,
         )
         if chore:
             await self.store.async_save_debounced()  # Use debounced save for performance
+            await self.async_request_refresh()
+        return chore
+
+    async def async_toggle_chore_step(
+        self, chore_id: str, step_index: int, completed: bool | None = None
+    ) -> dict[str, Any] | None:
+        """Tick or untick a micro-step on a chore."""
+        chore = self.store.toggle_chore_step(chore_id, step_index, completed)
+        if chore:
+            # Debounced: ticking through a checklist shouldn't hammer the disk
+            await self.store.async_save_debounced()
             await self.async_request_refresh()
         return chore
 

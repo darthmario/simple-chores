@@ -11,8 +11,11 @@ import pytest
 
 from custom_components.simple_chores.const import (
     MAX_CHORE_NAME_LENGTH,
+    MAX_ESTIMATED_MINUTES,
     MAX_HISTORY_ENTRIES,
     MAX_ROOM_NAME_LENGTH,
+    MAX_STEP_LENGTH,
+    MAX_STEPS_PER_CHORE,
 )
 from custom_components.simple_chores.store import SimpleChoresStore
 
@@ -465,6 +468,9 @@ class TestLoadSaveAndMigration:
         assert chore["is_completed"] is False
         assert chore["anchor_days_of_week"] is None
         assert chore["anchor_type"] is None
+        assert chore["estimated_minutes"] is None
+        assert chore["steps"] == []
+        assert chore["step_progress"] == []
 
     async def test_async_save_writes_data(self, store):
         store.add_room("Garage")
@@ -490,3 +496,225 @@ class TestLoadSaveAndMigration:
         chore = _add_basic_chore(store)
         assert store.remove_chore(chore["id"]) is True
         assert store.remove_chore(chore["id"]) is False
+
+
+class TestGetRecentHistory:
+    """The total sensor publishes this, so it has to stay bounded."""
+
+    @staticmethod
+    def _entry(index, completed_at):
+        return {
+            "id": f"h{index}",
+            "chore_id": "c1",
+            "chore_name": "Vacuum",
+            "completed_at": completed_at,
+            "completed_by": "u1",
+            "completed_by_name": "Alice",
+        }
+
+    def test_drops_the_unused_id_field(self, store):
+        store._data["history"] = [self._entry(0, "2024-06-15T10:00:00+00:00")]
+        entry = store.get_recent_history()[0]
+        assert "id" not in entry
+        # Everything the card actually reads survives
+        assert entry["chore_id"] == "c1"
+        assert entry["chore_name"] == "Vacuum"
+        assert entry["completed_at"] == "2024-06-15T10:00:00+00:00"
+        assert entry["completed_by"] == "u1"
+        assert entry["completed_by_name"] == "Alice"
+
+    def test_caps_entry_count_keeping_the_newest(self, store):
+        store._data["history"] = [self._entry(i, "2024-06-15T10:00:00+00:00") for i in range(500)]
+        recent = store.get_recent_history(max_entries=10)
+        assert len(recent) == 10
+        assert [e["chore_id"] for e in recent] == ["c1"] * 10
+        # History is chronological, so the tail is the newest
+        assert recent[-1]["completed_by_name"] == "Alice"
+
+    def test_drops_entries_older_than_the_window(self, store):
+        store._data["history"] = [
+            self._entry(0, "2020-01-01T10:00:00+00:00"),  # ancient
+            self._entry(1, "2024-06-14T10:00:00+00:00"),  # yesterday
+        ]
+        recent = store.get_recent_history()
+        assert len(recent) == 1
+        assert recent[0]["completed_at"] == "2024-06-14T10:00:00+00:00"
+
+    def test_keeps_entries_with_unparseable_dates(self, store):
+        store._data["history"] = [self._entry(0, "not-a-timestamp"), self._entry(1, None)]
+        assert len(store.get_recent_history()) == 2
+
+    def test_naive_timestamps_are_kept_not_compared(self, store):
+        # Comparing naive to aware would raise; these must pass through instead
+        store._data["history"] = [self._entry(0, "2020-01-01T10:00:00")]
+        assert len(store.get_recent_history()) == 1
+
+    def test_empty_history(self, store):
+        assert store.get_recent_history() == []
+
+    def test_does_not_mutate_stored_history(self, store):
+        store._data["history"] = [self._entry(0, "2024-06-15T10:00:00+00:00")]
+        store.get_recent_history()
+        assert store._data["history"][0]["id"] == "h0"
+        assert len(store.history) == 1
+
+    def test_default_window_covers_a_full_year_of_stats(self, store):
+        from custom_components.simple_chores.const import EXPOSED_HISTORY_DAYS
+
+        # The card's longest stats period is 1 year; the window must not cut into it
+        assert EXPOSED_HISTORY_DAYS >= 365
+
+
+class TestEstimatedMinutes:
+    def test_defaults_to_none(self, store):
+        assert _add_basic_chore(store)["estimated_minutes"] is None
+
+    def test_accepts_value(self, store):
+        assert _add_basic_chore(store, estimated_minutes=5)["estimated_minutes"] == 5
+
+    def test_coerces_numeric_string(self, store):
+        assert _add_basic_chore(store, estimated_minutes="15")["estimated_minutes"] == 15
+
+    def test_zero_means_no_estimate(self, store):
+        assert _add_basic_chore(store, estimated_minutes=0)["estimated_minutes"] is None
+
+    def test_negative_raises(self, store):
+        with pytest.raises(ValueError, match="between 1 and"):
+            _add_basic_chore(store, estimated_minutes=-5)
+
+    def test_above_max_raises(self, store):
+        with pytest.raises(ValueError, match="between 1 and"):
+            _add_basic_chore(store, estimated_minutes=MAX_ESTIMATED_MINUTES + 1)
+
+    def test_non_numeric_raises(self, store):
+        with pytest.raises(ValueError, match="whole number of minutes"):
+            _add_basic_chore(store, estimated_minutes="soon")
+
+    def test_update_sets_value(self, store):
+        chore = _add_basic_chore(store)
+        store.update_chore(chore["id"], estimated_minutes=10)
+        assert chore["estimated_minutes"] == 10
+
+    def test_update_omitted_leaves_unchanged(self, store):
+        chore = _add_basic_chore(store, estimated_minutes=10)
+        store.update_chore(chore["id"], name="Renamed")
+        assert chore["estimated_minutes"] == 10
+
+    def test_update_zero_clears(self, store):
+        chore = _add_basic_chore(store, estimated_minutes=10)
+        store.update_chore(chore["id"], estimated_minutes=0)
+        assert chore["estimated_minutes"] is None
+
+    def test_update_invalid_leaves_chore_untouched(self, store):
+        chore = _add_basic_chore(store, estimated_minutes=10)
+        with pytest.raises(ValueError):
+            store.update_chore(chore["id"], name="Renamed", estimated_minutes=99999)
+        assert chore["estimated_minutes"] == 10
+        assert chore["name"] == "Vacuum"
+
+
+class TestSteps:
+    def test_defaults_to_empty(self, store):
+        chore = _add_basic_chore(store)
+        assert chore["steps"] == []
+        assert chore["step_progress"] == []
+
+    def test_accepts_steps(self, store):
+        chore = _add_basic_chore(store, steps=["Clear counter", "Rinse", "Start it"])
+        assert chore["steps"] == ["Clear counter", "Rinse", "Start it"]
+
+    def test_strips_and_drops_blanks(self, store):
+        chore = _add_basic_chore(store, steps=["  Rinse  ", "", "   ", "Start"])
+        assert chore["steps"] == ["Rinse", "Start"]
+
+    def test_bare_string_raises(self, store):
+        with pytest.raises(ValueError, match="list of short text steps"):
+            _add_basic_chore(store, steps="Rinse")
+
+    def test_too_many_raises(self, store):
+        with pytest.raises(ValueError, match="Too many steps"):
+            _add_basic_chore(store, steps=[f"Step {i}" for i in range(MAX_STEPS_PER_CHORE + 1)])
+
+    def test_step_too_long_raises(self, store):
+        with pytest.raises(ValueError, match="Step text too long"):
+            _add_basic_chore(store, steps=["x" * (MAX_STEP_LENGTH + 1)])
+
+    def test_update_replaces_steps(self, store):
+        chore = _add_basic_chore(store, steps=["a", "b"])
+        store.update_chore(chore["id"], steps=["c"])
+        assert chore["steps"] == ["c"]
+
+    def test_update_empty_list_clears(self, store):
+        chore = _add_basic_chore(store, steps=["a", "b"])
+        store.update_chore(chore["id"], steps=[])
+        assert chore["steps"] == []
+
+    def test_update_omitted_leaves_unchanged(self, store):
+        chore = _add_basic_chore(store, steps=["a", "b"])
+        store.update_chore(chore["id"], name="Renamed")
+        assert chore["steps"] == ["a", "b"]
+
+    def test_shrinking_steps_drops_out_of_range_progress(self, store):
+        chore = _add_basic_chore(store, steps=["a", "b", "c"])
+        store.toggle_chore_step(chore["id"], 0)
+        store.toggle_chore_step(chore["id"], 2)
+        store.update_chore(chore["id"], steps=["a"])
+        assert chore["step_progress"] == [0]
+
+    def test_growing_steps_keeps_progress(self, store):
+        chore = _add_basic_chore(store, steps=["a", "b"])
+        store.toggle_chore_step(chore["id"], 1)
+        store.update_chore(chore["id"], steps=["a", "b", "c"])
+        assert chore["step_progress"] == [1]
+
+
+class TestToggleChoreStep:
+    def test_toggle_marks_done_then_undone(self, store):
+        chore = _add_basic_chore(store, steps=["a", "b"])
+        store.toggle_chore_step(chore["id"], 0)
+        assert chore["step_progress"] == [0]
+        store.toggle_chore_step(chore["id"], 0)
+        assert chore["step_progress"] == []
+
+    def test_explicit_completed_is_idempotent(self, store):
+        chore = _add_basic_chore(store, steps=["a", "b"])
+        store.toggle_chore_step(chore["id"], 1, completed=True)
+        store.toggle_chore_step(chore["id"], 1, completed=True)
+        assert chore["step_progress"] == [1]
+
+    def test_progress_stays_sorted(self, store):
+        chore = _add_basic_chore(store, steps=["a", "b", "c"])
+        for index in (2, 0, 1):
+            store.toggle_chore_step(chore["id"], index)
+        assert chore["step_progress"] == [0, 1, 2]
+
+    def test_unknown_chore_returns_none(self, store):
+        assert store.toggle_chore_step("nope", 0) is None
+
+    def test_index_out_of_range_raises(self, store):
+        chore = _add_basic_chore(store, steps=["a"])
+        with pytest.raises(ValueError, match="out of range"):
+            store.toggle_chore_step(chore["id"], 5)
+
+    def test_chore_without_steps_raises(self, store):
+        chore = _add_basic_chore(store)
+        with pytest.raises(ValueError, match="out of range"):
+            store.toggle_chore_step(chore["id"], 0)
+
+    def test_completing_chore_resets_progress(self, store):
+        chore = _add_basic_chore(store, steps=["a", "b"])
+        store.toggle_chore_step(chore["id"], 0)
+        store.complete_chore(chore["id"], "u1", "User One", date(2024, 6, 22))
+        assert chore["step_progress"] == []
+
+    def test_skipping_chore_resets_progress(self, store):
+        chore = _add_basic_chore(store, steps=["a", "b"])
+        store.toggle_chore_step(chore["id"], 0)
+        store.skip_chore(chore["id"], date(2024, 6, 22))
+        assert chore["step_progress"] == []
+
+    def test_snoozing_chore_keeps_progress(self, store):
+        chore = _add_basic_chore(store, steps=["a", "b"])
+        store.toggle_chore_step(chore["id"], 0)
+        store.snooze_chore(chore["id"])
+        assert chore["step_progress"] == [0]

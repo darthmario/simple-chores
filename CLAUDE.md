@@ -43,23 +43,6 @@ Since this is a Home Assistant custom integration (Python-based), there are no b
 
 ## Architecture
 
-### Core Components
-
-- **Store (`store.py`)**: Persistent data storage using Home Assistant's storage API. Manages rooms, chores, and completion history with automatic saving.
-
-- **Coordinator (`coordinator.py`)**: DataUpdateCoordinator that processes due dates, categorizes chores (due today, this week, overdue), and combines HA Areas with custom rooms. Updates every 15 minutes.
-
-- **Services**: 11 services for managing rooms/chores defined in `__init__.py`:
-  - Room management: add, remove, update
-  - Chore management: add, remove, update, complete, skip
-  - Data retrieval: history, user stats, manual notifications
-
-### Entity Types
-
-- **Sensors**: Count entities for due today, due this week, overdue, total chores
-- **Binary Sensor**: `has_overdue` status
-- **Calendar**: Visual calendar view of scheduled chores
-
 ### Data Model
 
 **Rooms**: Two types supported
@@ -72,37 +55,3 @@ Since this is a Home Assistant custom integration (Python-based), there are no b
 - Week bounds: Sunday (start) to Saturday (end)
 
 **History**: Completion tracking with user attribution and statistics
-
-### Key Features
-
-- **Auto-rescheduling**: When completed, chores automatically schedule next occurrence based on frequency
-- **User attribution**: Tracks who completed each chore (defaults to logged-in user)
-- **Notifications**: Daily push notifications to mobile devices at configurable time
-- **Config flow**: Single instance with notification settings (enabled, time, targets)
-
-### Dependencies
-
-- `python-dateutil>=2.8.0` for date calculations
-- Home Assistant 2024.1.0+
-
-### File Structure
-
-```
-custom_components/simple_chores/
-├── __init__.py          # Main integration setup & services
-├── const.py            # Constants & configuration keys  
-├── coordinator.py      # Data coordination & business logic
-├── store.py           # Persistent storage management
-├── config_flow.py     # Configuration UI flow
-├── sensor.py          # Count sensors
-├── binary_sensor.py   # Has overdue binary sensor
-├── calendar.py        # Calendar entity
-├── services.yaml      # Service definitions
-├── strings.json       # UI strings
-└── translations/      # Localization files
-
-custom_components/simple_chores/www/
-└── simple-chores-card.js  # Custom Lovelace card
-```
-
-The integration follows Home Assistant patterns with proper async handling, storage management, and entity lifecycle.
