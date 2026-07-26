@@ -5,7 +5,7 @@
 
 // Card version - update this when releasing new versions
 // This should match the version in manifest.json
-const CARD_VERSION = "1.9.0";
+const CARD_VERSION = "1.9.1";
 
 // Try the most direct approach used by working HA cards
 let LitElement, html, css;
@@ -1251,6 +1251,7 @@ class SimpleChoresCard extends LitElement {
 
     const isOverdue = this._parseLocalDate(dueDate) < new Date().setHours(0,0,0,0);
     const isMenuOpen = this._activeChoreMenu === chore.id;
+    const estimateMinutes = this._choreMinutes(chore);
 
     // Use modal-specific handlers if in modal context
     const completeHandler = inModal
@@ -1287,6 +1288,22 @@ class SimpleChoresCard extends LitElement {
                 <span class="chore-meta-separator">·</span>
                 <span class="chore-meta-item">${this._formatFrequency(chore.frequency)}</span>
               ` : ''}
+              <span class="chore-meta-separator">·</span>
+              ${estimateMinutes !== null ? html`
+                <span class="chore-meta-item">
+                  <ha-icon icon="mdi:timer-outline" class="meta-icon"></ha-icon>
+                  ${this._formatMinutes(estimateMinutes)}
+                </span>
+              ` : html`
+                <button
+                  class="chore-meta-estimate"
+                  title="No time estimate - this chore can't match a time filter"
+                  @click=${(e) => { e.stopPropagation(); this._promptForEstimate(chore.id); }}
+                >
+                  <ha-icon icon="mdi:timer-plus-outline"></ha-icon>
+                  No estimate
+                </button>
+              `}
               ${assignedUserName ? html`
                 <span class="chore-meta-separator">·</span>
                 <span class="chore-meta-item">
@@ -1295,6 +1312,12 @@ class SimpleChoresCard extends LitElement {
                 </span>
               ` : ''}
             </div>
+            ${this._estimatePromptFor === chore.id ? html`
+              <div class="chore-estimate-row" @click=${(e) => e.stopPropagation()}>
+                <span class="chore-estimate-label">How long does this take?</span>
+                ${this._renderEstimatePrompt(chore)}
+              </div>
+            ` : ''}
           </div>
           <div class="chore-card-actions">
             <button
@@ -7383,6 +7406,42 @@ class SimpleChoresCard extends LitElement {
 
       .step-add ha-icon {
         --mdc-icon-size: 16px;
+      }
+
+      .chore-meta-estimate {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 1px 8px;
+        border: 1px dashed var(--warning-color, #f59e0b);
+        border-radius: 999px;
+        background: transparent;
+        color: var(--warning-color, #f59e0b);
+        font-size: inherit;
+        font-family: inherit;
+        cursor: pointer;
+        vertical-align: middle;
+      }
+
+      .chore-meta-estimate:hover {
+        background: rgba(245, 158, 11, 0.12);
+      }
+
+      .chore-meta-estimate ha-icon {
+        --mdc-icon-size: 14px;
+      }
+
+      .chore-estimate-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 8px;
+      }
+
+      .chore-estimate-label {
+        font-size: 0.85em;
+        color: var(--secondary-text-color);
       }
 
       .chores-loading {

@@ -68,6 +68,13 @@ class StubDataUpdateCoordinator:
         return cls
 
     async def async_request_refresh(self):
+        # Real HA debounces this with a 10s cooldown; the integration uses
+        # async_refresh() instead so edits show up immediately
+        self.refresh_calls = getattr(self, "refresh_calls", 0) + 1
+        self.data = await self._async_update_data()
+
+    async def async_refresh(self):
+        self.refresh_calls = getattr(self, "refresh_calls", 0) + 1
         self.data = await self._async_update_data()
 
     async def async_config_entry_first_refresh(self):

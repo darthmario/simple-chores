@@ -161,6 +161,17 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         return result
 
+    async def _async_refresh_now(self) -> None:
+        """Refresh immediately, bypassing the request-refresh debouncer.
+
+        DataUpdateCoordinator.async_request_refresh() is debounced with a
+        10-second cooldown, so a run of edits leaves the UI showing stale data
+        for up to 10s per change. That protects integrations that hit a network
+        or device on refresh; ours recomputes from the in-memory store in ~11ms,
+        so there is nothing to protect and plenty to lose.
+        """
+        await self.async_refresh()
+
     async def _get_all_rooms(self) -> list[dict[str, Any]]:
         """Get all rooms from HA Area Registry and custom rooms."""
         rooms: list[dict[str, Any]] = []
@@ -263,7 +274,7 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         result = self.store.complete_chore(chore_id, user_id, user_name, next_due)
         if result:
             await self.store.async_save()
-            await self.async_request_refresh()
+            await self._async_refresh_now()
         return result
 
     async def async_skip_chore(self, chore_id: str) -> dict[str, Any] | None:
@@ -279,7 +290,7 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         result = self.store.skip_chore(chore_id, next_due)
         if result:
             await self.store.async_save()
-            await self.async_request_refresh()
+            await self._async_refresh_now()
         return result
 
     async def async_snooze_chore(self, chore_id: str) -> dict[str, Any] | None:
@@ -290,7 +301,7 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         result = self.store.snooze_chore(chore_id)
         if result:
             await self.store.async_save()
-            await self.async_request_refresh()
+            await self._async_refresh_now()
         return result
 
     async def async_add_room(self, name: str, icon: str | None = None) -> dict[str, Any]:
@@ -298,7 +309,7 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         room = self.store.add_room(name, icon)
         self._invalidate_room_cache()  # Cache must be refreshed
         await self.store.async_save()
-        await self.async_request_refresh()
+        await self._async_refresh_now()
         return room
 
     async def async_update_room(
@@ -309,7 +320,7 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if room:
             self._invalidate_room_cache()  # Cache must be refreshed
             await self.store.async_save()
-            await self.async_request_refresh()
+            await self._async_refresh_now()
         return room
 
     async def async_remove_room(self, room_id: str) -> bool:
@@ -318,14 +329,14 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if result:
             self._invalidate_room_cache()  # Cache must be refreshed
             await self.store.async_save()
-            await self.async_request_refresh()
+            await self._async_refresh_now()
         return result
 
     async def async_add_user(self, name: str, avatar: str | None = None) -> dict[str, Any]:
         """Add a custom user."""
         user = self.store.add_user(name, avatar)
         await self.store.async_save()
-        await self.async_request_refresh()
+        await self._async_refresh_now()
         return user
 
     async def async_update_user(
@@ -335,7 +346,7 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         user = self.store.update_user(user_id, name, avatar)
         if user:
             await self.store.async_save()
-            await self.async_request_refresh()
+            await self._async_refresh_now()
         return user
 
     async def async_remove_user(self, user_id: str) -> bool:
@@ -343,7 +354,7 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         result = self.store.remove_user(user_id)
         if result:
             await self.store.async_save()
-            await self.async_request_refresh()
+            await self._async_refresh_now()
         return result
 
     async def async_add_chore(
@@ -397,7 +408,7 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         _LOGGER.info("Coordinator: Created chore data: %s", chore)
         await self.store.async_save_debounced()  # Use debounced save for performance
-        await self.async_request_refresh()
+        await self._async_refresh_now()
         return chore
 
     async def async_update_chore(
@@ -448,7 +459,7 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         if chore:
             await self.store.async_save_debounced()  # Use debounced save for performance
-            await self.async_request_refresh()
+            await self._async_refresh_now()
         return chore
 
     async def async_toggle_chore_step(
@@ -459,7 +470,7 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if chore:
             # Debounced: ticking through a checklist shouldn't hammer the disk
             await self.store.async_save_debounced()
-            await self.async_request_refresh()
+            await self._async_refresh_now()
         return chore
 
     async def async_remove_chore(self, chore_id: str) -> bool:
@@ -467,5 +478,5 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         result = self.store.remove_chore(chore_id)
         if result:
             await self.store.async_save()  # Use immediate save for deletions
-            await self.async_request_refresh()
+            await self._async_refresh_now()
         return result

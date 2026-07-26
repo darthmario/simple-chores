@@ -155,6 +155,23 @@ function makeCard(stats = null, chores = CHORES, { seed = true } = {}) {
   return card;
 }
 
+/**
+ * Flatten a lit template result into text so render output can be asserted on.
+ * The stub `html` tag returns { strings, values }, so this interleaves them and
+ * recurses through nested templates and arrays. Event handlers are skipped.
+ */
+function renderToText(node) {
+  if (node == null || node === false || node === true) return '';
+  if (Array.isArray(node)) return node.map(renderToText).join('');
+  if (typeof node === 'function') return '';
+  if (typeof node === 'object' && Array.isArray(node.strings)) {
+    return node.strings
+      .map((str, i) => str + (i < node.values.length ? renderToText(node.values[i]) : ''))
+      .join('');
+  }
+  return String(node);
+}
+
 const results = [];
 const sameList = (a, b) => assert.equal(JSON.stringify(Array.from(a)), JSON.stringify(b));
 const check = async (name, fn) => {
@@ -847,6 +864,75 @@ await check('60 chores render in every view without throwing', () => {
     card._currentView = view;
     card.render();
   }
+});
+
+// --- Estimates in the chore list -----------------------------------------
+
+await check('a row shows its estimate when one is set', () => {
+  const card = makeCard();
+  const text = renderToText(card._renderChore(chore({ id: 'a', estimated_minutes: 15 })));
+  assert.ok(text.includes('15 min'), 'estimate is visible in the row');
+  assert.ok(!text.includes('No estimate'));
+});
+
+await check('a row without an estimate says so', () => {
+  const card = makeCard();
+  const text = renderToText(card._renderChore(chore({ id: 'd' })));
+  assert.ok(text.includes('No estimate'), 'missing estimate is called out');
+  assert.ok(text.includes('mdi:timer-plus-outline'), 'and offers to set one');
+});
+
+await check('hours are formatted, not shown as raw minutes', () => {
+  const card = makeCard();
+  const text = renderToText(card._renderChore(chore({ id: 'a', estimated_minutes: 90 })));
+  assert.ok(text.includes('1 hr 30 min'), text.slice(0, 200));
+});
+
+await check('the estimate shows in the all-chores modal too', () => {
+  const card = makeCard();
+  const text = renderToText(
+    card._renderChore(chore({ id: 'a', estimated_minutes: 5 }), { inModal: true, showFrequency: true })
+  );
+  assert.ok(text.includes('5 min'));
+  assert.ok(text.includes('Daily'), 'frequency still renders alongside it');
+});
+
+await check('the picker only opens on the row it was clicked', () => {
+  const card = makeCard();
+  card._promptForEstimate('d');
+  const opened = renderToText(card._renderChore(chore({ id: 'd' })));
+  const other = renderToText(card._renderChore(chore({ id: 'x' })));
+  assert.ok(opened.includes('How long does this take?'));
+  assert.ok(!other.includes('How long does this take?'), 'other rows stay untouched');
+});
+
+await check('the picker offers the quick estimates', () => {
+  const card = makeCard();
+  card._promptForEstimate('d');
+  const text = renderToText(card._renderChore(chore({ id: 'd' })));
+  for (const minutes of Card.constants.QUICK_ESTIMATES) {
+    assert.ok(text.includes(`${minutes}m`), `offers ${minutes}m`);
+  }
+});
+
+await check('setting an estimate from a row saves it and closes the picker', async () => {
+  const card = makeCard();
+  const calls = [];
+  card.hass.callService = async (domain, service, data) => { calls.push([service, data]); };
+  card._promptForEstimate('d');
+  await card._setEstimate(chore({ id: 'd', name: 'Mystery chore' }), 10);
+  assert.equal(calls[0][0], 'update_chore');
+  assert.equal(calls[0][1].chore_id, 'd');
+  assert.equal(calls[0][1].estimated_minutes, 10);
+  assert.equal(card._estimatePromptFor, null, 'picker closes after saving');
+});
+
+await check('toggling the prompt twice closes it', () => {
+  const card = makeCard();
+  card._promptForEstimate('d');
+  assert.equal(card._estimatePromptFor, 'd');
+  card._promptForEstimate('d');
+  assert.equal(card._estimatePromptFor, null);
 });
 
 // --- Report ---------------------------------------------------------------

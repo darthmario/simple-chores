@@ -409,3 +409,80 @@ class TestStatisticsInData:
         stats = (await coordinator._async_update_data())["statistics"]
         assert stats["total_completions"] == 0
         assert stats["done_today"] == 0
+
+
+class TestRefreshIsNotDebounced:
+    """HA's DataUpdateCoordinator debounces async_request_refresh() with a 10s
+    cooldown, which left the UI showing stale data for seconds at a time during
+    a run of edits. Every user-initiated mutation must refresh immediately."""
+
+    async def test_no_mutation_path_uses_the_debounced_refresh(self):
+        import inspect
+
+        from custom_components.simple_chores import coordinator as coordinator_module
+
+        source = inspect.getsource(coordinator_module)
+        assert "await self.async_request_refresh()" not in source, (
+            "async_request_refresh() is debounced by 10s - use _async_refresh_now()"
+        )
+
+    @pytest.mark.parametrize(
+        "action",
+        [
+            "complete",
+            "skip",
+            "snooze",
+            "add_chore",
+            "update_chore",
+            "remove_chore",
+            "toggle_step",
+            "add_room",
+            "add_user",
+        ],
+    )
+    async def test_every_mutation_refreshes_immediately(self, coordinator, store, action):
+        chore = store.add_chore("Vacuum", "area_kitchen", "weekly", start_date=TODAY, steps=["a"])
+        await coordinator._async_update_data()
+        coordinator.refresh_calls = 0
+
+        if action == "complete":
+            await coordinator.async_complete_chore(chore["id"], "u1")
+        elif action == "skip":
+            await coordinator.async_skip_chore(chore["id"])
+        elif action == "snooze":
+            await coordinator.async_snooze_chore(chore["id"])
+        elif action == "add_chore":
+            await coordinator.async_add_chore("New", "area_kitchen", "daily")
+        elif action == "update_chore":
+            await coordinator.async_update_chore(chore["id"], name="Renamed")
+        elif action == "remove_chore":
+            await coordinator.async_remove_chore(chore["id"])
+        elif action == "toggle_step":
+            await coordinator.async_toggle_chore_step(chore["id"], 0)
+        elif action == "add_room":
+            await coordinator.async_add_room("Garage")
+        elif action == "add_user":
+            await coordinator.async_add_user("Alice")
+
+        assert coordinator.refresh_calls == 1, f"{action} did not refresh the UI"
+
+    async def test_back_to_back_edits_each_refresh(self, coordinator, store):
+        # The reported symptom: several quick edits, only the first showing up
+        chore = store.add_chore("Vacuum", "area_kitchen", "weekly", start_date=TODAY)
+        coordinator.refresh_calls = 0
+        for name in ("One", "Two", "Three", "Four"):
+            await coordinator.async_update_chore(chore["id"], name=name)
+        assert coordinator.refresh_calls == 4
+
+    async def test_data_is_current_when_the_call_returns(self, coordinator, store):
+        # The card re-fetches as soon as the service call resolves, so the
+        # coordinator must already hold the new state by then
+        chore = store.add_chore("Vacuum", "area_kitchen", "weekly", start_date=TODAY)
+        await coordinator.async_update_chore(chore["id"], name="Renamed")
+        assert coordinator.data["chores"][0]["name"] == "Renamed"
+
+    async def test_revision_is_current_when_the_call_returns(self, coordinator, store):
+        chore = store.add_chore("Vacuum", "area_kitchen", "weekly", start_date=TODAY)
+        before = (await coordinator._async_update_data())["revision"]
+        await coordinator.async_update_chore(chore["id"], estimated_minutes=5)
+        assert coordinator.data["revision"] != before
