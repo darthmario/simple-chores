@@ -70,6 +70,36 @@ jobs:
       - name: Run focus view tests
         run: node tests/js/focus-view.test.mjs
 
+  # The integration serves the card as ...?v=<manifest version>. Without a
+  # bump, browsers and the wall tablet keep the cached old card, which has
+  # bitten before. Fail any PR that touches the card without bumping it.
+  card-version:
+    name: Card Version
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require a manifest version bump when the card changes
+        run: |
+          base="origin/${{ github.base_ref }}"
+          card=custom_components/simple_chores/www/simple-chores-card.js
+          manifest=custom_components/simple_chores/manifest.json
+          if git diff --quiet "$base...HEAD" -- "$card"; then
+            echo "Card unchanged; nothing to check."
+            exit 0
+          fi
+          old=$(git show "$base:$manifest" | python3 -c 'import json, sys; print(json.load(sys.stdin)["version"])')
+          new=$(python3 -c "import json; print(json.load(open('$manifest'))['version'])")
+          if [ "$old" = "$new" ]; then
+            echo "::error file=$manifest::The card changed but manifest.json is still $old. Bump \"version\" so browsers and the wall tablet fetch the new card."
+            exit 1
+          fi
+          echo "Card changed and version bumped: $old -> $new"
+
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -89,7 +119,7 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          pytest tests/ --cov=custom_components/simple_chores --cov-report=xml --cov-report=term-missing --cov-fail-under=40
+          pytest tests/ --cov=custom_components/simple_chores --cov-report=xml --cov-report=term-missing --cov-fail-under=50
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
