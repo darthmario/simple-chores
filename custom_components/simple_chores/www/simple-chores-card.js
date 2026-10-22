@@ -753,12 +753,26 @@ class SimpleChoresCard extends LitElement {
     // Get selected assignee name for dropdown button
     const selectedAssigneeName = this._getSelectedAssigneeName(users);
 
+    const doneToday = this._getDoneTodayCount();
+    const streak = this._getStreak();
+
     return html`
       <ha-card class="${cardClasses}">
         <div class="card-header" @click=${this._handleHeaderClick}>
-          <!-- Top row: Title + Add Chore button -->
+          <!-- Top row: title and greeting, day ring, Add Chore -->
           <div class="header-top-row">
-            <div class="card-title">${this.config.title}</div>
+            <div class="header-title-block">
+              <div class="card-title">${this.config.title}</div>
+              <div class="card-greeting">
+                <span>${this._greetingWord()}. ${this._progressPhrase(doneToday, dueToday.length)}</span>
+                ${streak > 1 ? html`
+                  <span class="header-streak" title="${streak} days in a row with at least one chore done">
+                    <ha-icon icon="mdi:fire"></ha-icon>${streak}
+                  </span>
+                ` : ''}
+              </div>
+            </div>
+            ${this._renderDayRing(doneToday, dueToday.length)}
             <button class="add-chore-btn-primary" @click=${this._openAddChoreModal} title="Add New Chore">
               <ha-icon icon="mdi:plus"></ha-icon>
               <span>Add Chore</span>
@@ -893,6 +907,7 @@ class SimpleChoresCard extends LitElement {
             ${this._renderChoreList(dueToday, "Due Today")}
             ${this._renderChoreList(dueThisWeek, "Due in Next 7 Days")}
           ` : ''}
+          ${this._renderCelebration()}
         </div>
 
         ${this._renderAddRoomModal()}
@@ -994,6 +1009,92 @@ class SimpleChoresCard extends LitElement {
     e.stopPropagation();
     this._showAssigneeDropdown = false;
     this._openManageUsersModal();
+  }
+
+  // --- Header: greeting and day ring ---------------------------------------
+
+  /**
+   * The time-of-day half of the header greeting.
+   * @param {Date} now - injectable for tests
+   */
+  _greetingWord(now = new Date()) {
+    const hour = now.getHours();
+    if (hour < 5) return "Up late";
+    if (hour < 12) return "Good morning";
+    if (hour < 17) return "Good afternoon";
+    if (hour < 21) return "Good evening";
+    return "Winding down";
+  }
+
+  /**
+   * The progress half of the header greeting: where today stands in a few
+   * words, so the card reads like a note on the fridge rather than a status
+   * panel.
+   */
+  _progressPhrase(done, remaining) {
+    if (remaining === 0 && done > 0) return "All done, nice.";
+    if (remaining === 0) return "Nothing due today.";
+    const left = `${remaining} to go`;
+    return done > 0 ? `${left}, ${done} done.` : `${left}.`;
+  }
+
+  /**
+   * A small ring showing chores done today out of those due today. Overdue
+   * chores are part of "due today", so the ring only closes when the day is
+   * genuinely clear.
+   */
+  _renderDayRing(done, remaining) {
+    const total = done + remaining;
+    const fraction = total > 0 ? done / total : 0;
+    const radius = 19;
+    const circumference = 2 * Math.PI * radius;
+    const offset = circumference * (1 - fraction);
+    const complete = total > 0 && remaining === 0;
+
+    return html`
+      <div
+        class="header-ring ${complete ? 'complete' : ''}"
+        role="img"
+        aria-label="${done} of ${total} chores done today"
+        title="${done} of ${total} done today"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <circle class="ring-track" cx="24" cy="24" r="${radius}"></circle>
+          <circle
+            class="ring-value"
+            cx="24" cy="24" r="${radius}"
+            stroke-dasharray="${circumference.toFixed(1)}"
+            stroke-dashoffset="${offset.toFixed(1)}"
+          ></circle>
+        </svg>
+        <span class="header-ring-label">${done}/${total}</span>
+      </div>
+    `;
+  }
+
+  /**
+   * A critter asleep on a rock, for the "nothing to do" states. Inline SVG so
+   * the card stays a single file; colours come from the paper tokens.
+   */
+  _renderSleepingCritter() {
+    return html`
+      <svg class="sc-critter" viewBox="0 0 140 84" aria-hidden="true">
+        <ellipse cx="70" cy="76" rx="58" ry="6" style="fill: var(--sc-line)"></ellipse>
+        <path d="M16 72 Q70 46 124 72 Z" style="fill: var(--sc-ink-muted); opacity: 0.55"></path>
+        <g class="critter-body">
+          <path d="M38 58 Q20 64 26 74" style="fill: none; stroke: var(--sc-critter); stroke-width: 7; stroke-linecap: round"></path>
+          <ellipse cx="70" cy="56" rx="34" ry="18" style="fill: var(--sc-critter)"></ellipse>
+          <ellipse cx="74" cy="60" rx="22" ry="10" style="fill: var(--sc-critter-belly)"></ellipse>
+          <circle cx="86" cy="35" r="4.5" style="fill: var(--sc-critter)"></circle>
+          <circle cx="96" cy="46" r="15" style="fill: var(--sc-critter)"></circle>
+          <ellipse cx="101" cy="51" rx="8" ry="5.5" style="fill: var(--sc-critter-belly)"></ellipse>
+          <path d="M89 44 q3.5 3 7 0" style="fill: none; stroke: var(--sc-ink); stroke-width: 1.6; stroke-linecap: round"></path>
+          <ellipse cx="104" cy="49" rx="2.2" ry="1.6" style="fill: var(--sc-ink)"></ellipse>
+        </g>
+        <text class="critter-z" x="112" y="30" font-size="11">z</text>
+        <text class="critter-z second" x="120" y="22" font-size="14">z</text>
+      </svg>
+    `;
   }
 
   _renderStats() {
@@ -1201,7 +1302,10 @@ class SimpleChoresCard extends LitElement {
       <div class="section">
         <h3>${title} (${filteredChores.length})</h3>
         ${filteredChores.length === 0 ? html`
-          <p class="no-chores">No chores ${title.toLowerCase()}${this._selectedRoom !== 'all' ? ' in this room' : ''}</p>
+          <div class="no-chores">
+            ${this._renderSleepingCritter()}
+            <p>No chores ${title.toLowerCase()}${this._selectedRoom !== 'all' ? ' in this room' : ''}</p>
+          </div>
         ` : html`
           <div class="chore-list">
             ${choresToRender.map(chore => this._renderChore(chore))}
@@ -1347,7 +1451,7 @@ class SimpleChoresCard extends LitElement {
           </div>
           <div class="chore-card-actions">
             <button
-              class="chore-action-btn complete"
+              class="chore-action-btn complete ${this._celebration && this._celebration.id === chore.id ? 'done' : ''}"
               @click=${completeHandler}
               title="Complete"
             >
@@ -2790,7 +2894,9 @@ class SimpleChoresCard extends LitElement {
 
   _celebrate(choreId) {
     const { CELEBRATION_PARTICLES, CELEBRATION_MS } = this.constructor.constants;
-    const colors = ['#f97316', '#22c55e', '#3b82f6', '#eab308', '#ec4899', '#06b6d4'];
+    // Theme tokens resolve inside the shadow root, so the burst matches the
+    // dashboard's palette instead of a fixed rainbow
+    const colors = ['var(--sc-accent)', 'var(--sc-success)', 'var(--sc-warning)', 'var(--sc-accent-dark)', '#f6cd8d', '#9fb0c2'];
 
     // Randomise once, not on every re-render, so the burst doesn't jitter
     const particles = Array.from({ length: CELEBRATION_PARTICLES }, (_unused, i) => ({
@@ -2854,7 +2960,6 @@ class SimpleChoresCard extends LitElement {
         ${queue.length === 0
           ? this._renderFocusEmpty(pool)
           : (this._focusMode === 'board' ? this._renderFocusBoard(queue) : this._renderFocusDeck(queue))}
-        ${this._renderCelebration()}
       </div>
     `;
   }
@@ -3190,7 +3295,7 @@ class SimpleChoresCard extends LitElement {
     if (!this._focusGetAhead) {
       return html`
         <div class="focus-empty done">
-          <ha-icon icon="mdi:party-popper"></ha-icon>
+          ${this._renderSleepingCritter()}
           <h3>All caught up</h3>
           <p>Nothing else is due today.</p>
           <button class="focus-empty-btn" @click=${this._focusStartGetAhead}>Get ahead on this week</button>
@@ -3200,7 +3305,7 @@ class SimpleChoresCard extends LitElement {
 
     return html`
       <div class="focus-empty done">
-        <ha-icon icon="mdi:party-popper"></ha-icon>
+        ${this._renderSleepingCritter()}
         <h3>Nothing left this week either</h3>
         <p>Genuinely nothing to do. Go sit down.</p>
       </div>
@@ -3223,6 +3328,7 @@ class SimpleChoresCard extends LitElement {
     this.hass.callService("simple_chores", "complete_chore", {
       chore_id: choreId
     }).then(() => {
+      this._celebrate(choreId);
       this._showToast("Chore completed!");
     });
   }
@@ -4987,6 +5093,7 @@ class SimpleChoresCard extends LitElement {
 
       await this.hass.callService("simple_chores", "complete_chore", serviceData);
       this._forgetStepsExpanded(completionData.choreId);
+      this._celebrate(completionData.choreId);
 
       // If the assignment selection changed, update the chore assignment.
       // An empty string explicitly clears the assignment on the backend.
@@ -5405,6 +5512,31 @@ class SimpleChoresCard extends LitElement {
          ============================================ */
       :host {
         display: block;
+
+        /* Paper skin tokens. Each resolves from the active Home Assistant
+           theme and falls back to the Headwaters palette, so the card picks
+           up a themed dashboard (fonts, cream cards, terracotta) with no
+           config, and still looks coherent on a stock theme. */
+        --sc-ink: var(--primary-text-color, #274740);
+        --sc-ink-soft: var(--secondary-text-color, #4d6a5e);
+        --sc-ink-muted: var(--disabled-text-color, #9bb3a4);
+        --sc-accent: var(--primary-color, #de6a2f);
+        --sc-accent-dark: var(--dark-primary-color, #b9531f);
+        --sc-accent-rgb: var(--rgb-primary-color, 222, 106, 47);
+        --sc-on-accent: var(--text-primary-color, #fdf4e6);
+        --sc-success: var(--success-color, #4d7c6a);
+        --sc-success-rgb: var(--rgb-success-color, 77, 124, 106);
+        --sc-danger: var(--error-color, #b9531f);
+        --sc-danger-rgb: var(--rgb-error-color, 185, 83, 31);
+        --sc-warning: var(--warning-color, #efa95c);
+        --sc-surface: var(--ha-card-background, var(--card-background-color, #fffdf6));
+        --sc-paper: var(--secondary-background-color, #f4efe2);
+        --sc-line: var(--divider-color, rgba(46, 90, 79, 0.1));
+        --sc-radius: var(--ha-card-border-radius, 12px);
+        --sc-shadow: var(--ha-card-box-shadow, 0 2px 8px rgba(0, 0, 0, 0.08));
+        --sc-heading-font: var(--ha-font-family-heading, var(--ha-font-family-body, inherit));
+        --sc-critter: #b9743a;
+        --sc-critter-belly: #f1cf9b;
       }
 
       /* Full width mode - makes card span entire column width */
@@ -5453,42 +5585,123 @@ class SimpleChoresCard extends LitElement {
          HEADER & CONTROLS (New Gradient Design)
          ============================================ */
       .card-header {
-        padding: 16px;
-        background: linear-gradient(to right, #06b6d4, #3b82f6);
-        color: white;
-        border-radius: 12px 12px 0 0;
+        padding: 16px 16px 12px;
+        background: transparent;
+        color: var(--sc-ink);
+        border-bottom: 1px solid var(--sc-line);
       }
 
       .header-top-row {
         display: flex;
         justify-content: space-between;
         align-items: center;
+        gap: 12px;
         margin-bottom: 12px;
       }
 
+      .header-title-block {
+        flex: 1;
+        min-width: 0;
+      }
+
       .card-title {
+        font-family: var(--sc-heading-font);
         font-size: 1.5em;
-        font-weight: 600;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        line-height: 1.15;
         margin: 0;
+      }
+
+      .card-greeting {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 3px;
+        font-size: 0.9em;
+        font-weight: 600;
+        color: var(--sc-ink-soft);
+      }
+
+      .header-streak {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        padding: 1px 8px;
+        border-radius: 999px;
+        background: rgba(var(--sc-accent-rgb), 0.14);
+        color: var(--sc-accent-dark);
+        font-size: 0.85em;
+        font-weight: 700;
+      }
+
+      .header-streak ha-icon {
+        --mdc-icon-size: 14px;
+      }
+
+      /* Day ring: done today out of due today */
+      .header-ring {
+        position: relative;
+        width: 48px;
+        height: 48px;
+        flex-shrink: 0;
+      }
+
+      .header-ring svg {
+        width: 100%;
+        height: 100%;
+        transform: rotate(-90deg);
+      }
+
+      .header-ring .ring-track {
+        fill: none;
+        stroke: var(--sc-paper);
+        stroke-width: 5;
+      }
+
+      .header-ring .ring-value {
+        fill: none;
+        stroke: var(--sc-success);
+        stroke-width: 5;
+        stroke-linecap: round;
+        transition: stroke-dashoffset 0.4s ease;
+      }
+
+      .header-ring.complete .ring-value {
+        stroke: var(--sc-accent);
+      }
+
+      .header-ring-label {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: var(--sc-heading-font);
+        font-size: 0.8em;
+        font-weight: 700;
+        color: var(--sc-ink);
       }
 
       .add-chore-btn-primary {
         display: flex;
         align-items: center;
         gap: 6px;
-        background: rgba(255, 255, 255, 0.2);
+        background: var(--sc-accent);
         border: none;
-        border-radius: 8px;
-        padding: 8px 14px;
-        color: white;
-        font-size: 0.6em;
-        font-weight: 500;
+        border-radius: 999px;
+        padding: 9px 16px;
+        color: var(--sc-on-accent);
+        font-size: 0.8em;
+        font-weight: 700;
         cursor: pointer;
-        transition: background-color 0.2s;
+        transition: background-color 0.2s, transform 0.15s;
       }
 
       .add-chore-btn-primary:hover {
-        background: rgba(255, 255, 255, 0.3);
+        background: var(--sc-accent-dark);
+        transform: translateY(-1px);
       }
 
       .add-chore-btn-primary ha-icon {
@@ -5522,18 +5735,19 @@ class SimpleChoresCard extends LitElement {
         display: flex;
         align-items: center;
         gap: 6px;
-        background: rgba(255, 255, 255, 0.15);
+        background: var(--sc-paper);
         border: none;
-        border-radius: 8px;
-        padding: 6px 12px;
-        color: white;
-        font-size: 0.6em;
+        border-radius: 999px;
+        padding: 7px 12px;
+        color: var(--sc-ink);
+        font-size: 0.8em;
+        font-weight: 700;
         cursor: pointer;
         transition: background-color 0.2s;
       }
 
       .dropdown-btn:hover {
-        background: rgba(255, 255, 255, 0.25);
+        background: rgba(var(--sc-accent-rgb), 0.14);
       }
 
       .dropdown-btn ha-icon {
@@ -5604,25 +5818,27 @@ class SimpleChoresCard extends LitElement {
 
       /* Icon buttons in header */
       .icon-btn {
-        background: rgba(255, 255, 255, 0.1);
+        background: var(--sc-paper);
         border: none;
-        border-radius: 8px;
+        border-radius: 999px;
         width: 36px;
         height: 36px;
         display: flex;
         align-items: center;
         justify-content: center;
-        color: white;
+        color: var(--sc-ink-soft);
         cursor: pointer;
-        transition: background-color 0.2s;
+        transition: background-color 0.2s, color 0.2s;
       }
 
       .icon-btn:hover {
-        background: rgba(255, 255, 255, 0.2);
+        background: rgba(var(--sc-accent-rgb), 0.14);
+        color: var(--sc-accent-dark);
       }
 
       .icon-btn.active {
-        background: rgba(255, 255, 255, 0.3);
+        background: var(--sc-accent);
+        color: var(--sc-on-accent);
       }
 
       .icon-btn ha-icon {
@@ -5962,8 +6178,8 @@ class SimpleChoresCard extends LitElement {
       }
 
       .agenda-day.today {
-        border-color: var(--primary-color, #03a9f4);
-        box-shadow: 0 0 0 1px var(--primary-color, #03a9f4);
+        border-color: var(--sc-accent);
+        box-shadow: 0 0 0 1px var(--sc-accent);
       }
 
       .agenda-day.past {
@@ -5993,7 +6209,7 @@ class SimpleChoresCard extends LitElement {
       }
 
       .agenda-today-badge {
-        background: var(--primary-color, #03a9f4);
+        background: var(--sc-accent);
         color: var(--text-primary-color, #fff);
         padding: 2px 8px;
         border-radius: 12px;
@@ -6046,7 +6262,7 @@ class SimpleChoresCard extends LitElement {
         width: 4px;
         height: 32px;
         border-radius: 2px;
-        background: var(--primary-color, #03a9f4);
+        background: var(--sc-accent);
         flex-shrink: 0;
       }
 
@@ -6055,7 +6271,7 @@ class SimpleChoresCard extends LitElement {
       }
 
       .agenda-chore-indicator.projected {
-        background: var(--primary-color, #03a9f4);
+        background: var(--sc-accent);
         opacity: 0.5;
       }
 
@@ -6102,7 +6318,7 @@ class SimpleChoresCard extends LitElement {
 
       .agenda-chore-projected-badge {
         display: inline-block;
-        background: var(--primary-color, #03a9f4);
+        background: var(--sc-accent);
         color: var(--text-primary-color, #fff);
         padding: 1px 6px;
         border-radius: 8px;
@@ -6112,7 +6328,7 @@ class SimpleChoresCard extends LitElement {
 
       .agenda-chore-edit,
       .agenda-chore-complete {
-        background: var(--primary-color, #03a9f4);
+        background: var(--sc-accent);
         border: none;
         color: var(--text-primary-color, #fff);
         width: 32px;
@@ -6170,6 +6386,7 @@ class SimpleChoresCard extends LitElement {
          CONTENT & STATS
          ============================================ */
       .card-content {
+        position: relative;
         padding: 16px;
       }
 
@@ -6190,62 +6407,60 @@ class SimpleChoresCard extends LitElement {
         align-items: center;
         justify-content: center;
         padding: 12px 8px;
-        background: var(--card-background-color);
-        border: 2px solid var(--divider-color);
-        border-radius: 12px;
+        background: var(--sc-paper);
+        border: 2px solid transparent;
+        border-radius: 14px;
         transition: all 0.2s ease;
         min-height: 70px;
       }
 
-      /* Due Today - Green border */
+      /* Due Today - accent */
       .stat.attention {
-        border-color: #34d399;
-        background: rgba(52, 211, 153, 0.05);
+        background: rgba(var(--sc-accent-rgb), 0.12);
       }
 
-      /* Overdue - Red border */
+      /* Overdue - danger ink */
       .stat.warning {
-        border-color: #f87171;
-        background: rgba(248, 113, 113, 0.05);
+        background: rgba(var(--sc-danger-rgb), 0.12);
       }
 
       .stat-value {
+        font-family: var(--sc-heading-font);
         font-size: 1.75em;
         font-weight: 700;
-        color: var(--primary-text-color);
+        color: var(--sc-ink);
         line-height: 1;
       }
 
       .stat.attention .stat-value {
-        color: #10b981;
+        color: var(--sc-accent-dark);
       }
 
       .stat.warning .stat-value {
-        color: #ef4444;
+        color: var(--sc-danger);
       }
 
       .stat-label {
         font-size: 0.75em;
-        color: var(--secondary-text-color);
+        font-weight: 600;
+        color: var(--sc-ink-soft);
         margin-top: 4px;
         text-align: center;
       }
 
-      /* Active chores - Cyan border */
+      /* Active chores - opens the All Chores modal */
       .stat.clickable {
         cursor: pointer;
-        border-color: #22d3ee;
-        background: rgba(34, 211, 238, 0.05);
       }
 
       .stat.clickable .stat-value {
-        color: #06b6d4;
+        color: var(--sc-success);
       }
 
       .stat.clickable:hover {
         transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-        background: rgba(34, 211, 238, 0.1);
+        box-shadow: var(--sc-shadow);
+        border-color: var(--sc-line);
       }
 
       /* Statistics Dashboard Expand Button */
@@ -6381,7 +6596,7 @@ class SimpleChoresCard extends LitElement {
       .stats-chart-bar {
         width: 100%;
         max-width: 40px;
-        background: linear-gradient(to top, var(--primary-color, #03a9f4), #06b6d4);
+        background: var(--sc-accent);
         border-radius: 4px 4px 0 0;
         transition: height 0.3s ease;
         min-height: 4px;
@@ -6499,7 +6714,7 @@ class SimpleChoresCard extends LitElement {
 
       .stats-horizontal-bar-fill {
         height: 100%;
-        background: linear-gradient(to right, var(--primary-color, #03a9f4), #06b6d4);
+        background: var(--sc-accent);
         border-radius: 4px;
         transition: width 0.3s ease;
       }
@@ -6513,12 +6728,12 @@ class SimpleChoresCard extends LitElement {
       }
 
       .stats-horizontal-bar.leader .stats-horizontal-bar-fill {
-        background: linear-gradient(to right, #f59e0b, #fbbf24);
+        background: var(--sc-warning);
       }
 
       .leader-icon {
         --mdc-icon-size: 14px;
-        color: #f59e0b;
+        color: var(--sc-warning);
       }
 
       /* Empty State */
@@ -6545,12 +6760,12 @@ class SimpleChoresCard extends LitElement {
       }
       
       .section h3 {
-        margin: 0 0 12px 0;
-        font-size: 1.1em;
-        font-weight: 500;
-        color: var(--primary-text-color);
-        padding-bottom: 8px;
-        border-bottom: 2px solid var(--primary-color);
+        margin: 0 0 10px 0;
+        font-family: var(--sc-heading-font);
+        font-size: 1.15em;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        color: var(--sc-ink);
       }
 
       /* ============================================
@@ -6566,20 +6781,20 @@ class SimpleChoresCard extends LitElement {
          NEW COMPACT CHORE CARDS
          ============================================ */
       .chore-card {
-        background: var(--card-background-color);
-        border: 1px solid var(--divider-color);
-        border-radius: 12px;
+        background: var(--sc-paper);
+        border: 1px solid transparent;
+        border-radius: 14px;
         padding: 12px 16px;
         transition: all 0.2s ease;
       }
 
       .chore-card:hover {
-        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        border-color: var(--sc-line);
+        box-shadow: var(--sc-shadow);
       }
 
       .chore-card.overdue {
-        border-color: #fecaca;
-        background: rgba(254, 202, 202, 0.1);
+        background: rgba(var(--sc-danger-rgb), 0.1);
       }
 
       .chore-card-content {
@@ -6626,8 +6841,8 @@ class SimpleChoresCard extends LitElement {
       }
 
       .chore-meta-item.overdue-text {
-        color: #ef4444;
-        font-weight: 500;
+        color: var(--sc-danger);
+        font-weight: 700;
       }
 
       .chore-card-actions {
@@ -6647,17 +6862,33 @@ class SimpleChoresCard extends LitElement {
         transition: all 0.15s ease;
       }
 
+      /* The round check circle: empty until tapped, like a paper checklist */
       .chore-action-btn.complete {
         width: 36px;
         height: 36px;
-        background: #10b981;
-        color: white;
+        background: transparent;
+        border: 2.5px solid var(--sc-ink-muted);
+        color: transparent;
         margin-right: 6px;
       }
 
       .chore-action-btn.complete:hover {
-        background: #059669;
+        border-color: var(--sc-success);
+        color: var(--sc-success);
         transform: scale(1.05);
+      }
+
+      .chore-action-btn.complete.done {
+        border-color: var(--sc-success);
+        background: var(--sc-success);
+        color: var(--sc-on-accent);
+        animation: sc-pop 0.25s ease-out;
+      }
+
+      @keyframes sc-pop {
+        0% { transform: scale(0.8); }
+        60% { transform: scale(1.15); }
+        100% { transform: scale(1); }
       }
 
       .chore-action-btn.complete ha-icon {
@@ -6668,7 +6899,7 @@ class SimpleChoresCard extends LitElement {
         width: 32px;
         height: 32px;
         background: transparent;
-        color: #9ca3af;
+        color: var(--sc-ink-muted);
       }
 
       .chore-action-btn.secondary:hover {
@@ -6719,11 +6950,11 @@ class SimpleChoresCard extends LitElement {
       }
 
       .overflow-menu-item.danger {
-        color: #ef4444;
+        color: var(--sc-danger);
       }
 
       .overflow-menu-item.danger ha-icon {
-        color: #ef4444;
+        color: var(--sc-danger);
       }
 
       /* Legacy chore-item styles (kept for All Chores modal) */
@@ -6833,13 +7064,55 @@ class SimpleChoresCard extends LitElement {
       }
       
       .no-chores {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
         text-align: center;
-        color: var(--secondary-text-color);
-        font-style: italic;
-        padding: 32px;
-        background: var(--card-background-color);
-        border: 1px dashed var(--divider-color);
-        border-radius: 8px;
+        color: var(--sc-ink-soft);
+        font-weight: 600;
+        padding: 20px 16px 22px;
+        background: var(--sc-paper);
+        border-radius: 14px;
+      }
+
+      .no-chores p {
+        margin: 0;
+      }
+
+      /* --- The sleeping critter (empty states) --- */
+      .sc-critter {
+        width: 140px;
+        height: 84px;
+        overflow: visible;
+      }
+
+      .sc-critter .critter-body {
+        animation: sc-breathe 3.2s ease-in-out infinite;
+        transform-origin: 70px 62px;
+      }
+
+      .sc-critter .critter-z {
+        font-family: var(--sc-heading-font);
+        font-weight: 700;
+        fill: var(--sc-ink-muted);
+        animation: sc-zz 3.2s ease-in-out infinite;
+        opacity: 0;
+      }
+
+      .sc-critter .critter-z.second {
+        animation-delay: 1.1s;
+      }
+
+      @keyframes sc-breathe {
+        0%, 100% { transform: scaleY(1); }
+        50% { transform: scaleY(1.04); }
+      }
+
+      @keyframes sc-zz {
+        0% { opacity: 0; transform: translate(0, 0); }
+        30% { opacity: 1; }
+        100% { opacity: 0; transform: translate(6px, -14px); }
       }
 
       /* ============================================
@@ -6899,7 +7172,7 @@ class SimpleChoresCard extends LitElement {
         padding: 8px 14px;
         border: none;
         border-radius: 8px;
-        background: var(--primary-color, #03a9f4);
+        background: var(--sc-accent);
         color: white;
         font-size: 14px;
         cursor: pointer;
@@ -7464,7 +7737,7 @@ class SimpleChoresCard extends LitElement {
 
       .step-remove:hover {
         background: var(--secondary-background-color);
-        color: var(--error-color, #ef4444);
+        color: var(--sc-danger);
       }
 
       .step-remove ha-icon {
@@ -7498,10 +7771,10 @@ class SimpleChoresCard extends LitElement {
         align-items: center;
         gap: 4px;
         padding: 1px 8px;
-        border: 1px dashed var(--warning-color, #f59e0b);
+        border: 1px dashed var(--sc-warning);
         border-radius: 999px;
         background: transparent;
-        color: var(--warning-color, #f59e0b);
+        color: var(--sc-warning);
         font-size: inherit;
         font-family: inherit;
         cursor: pointer;
@@ -7509,7 +7782,7 @@ class SimpleChoresCard extends LitElement {
       }
 
       .chore-meta-estimate:hover {
-        background: rgba(245, 158, 11, 0.12);
+        background: rgba(var(--sc-accent-rgb), 0.12);
       }
 
       .chore-meta-estimate ha-icon {
@@ -7547,8 +7820,8 @@ class SimpleChoresCard extends LitElement {
 
       .chore-meta-steps:hover,
       .chore-meta-steps.open {
-        border-color: #22c55e;
-        color: #16a34a;
+        border-color: var(--sc-success);
+        color: var(--sc-success);
       }
 
       .chore-meta-steps ha-icon {
@@ -7600,7 +7873,7 @@ class SimpleChoresCard extends LitElement {
 
       .completion-steps-title ha-icon {
         --mdc-icon-size: 18px;
-        color: #22c55e;
+        color: var(--sc-success);
       }
 
       .completion-step-list {
@@ -7630,7 +7903,7 @@ class SimpleChoresCard extends LitElement {
       }
 
       .completion-step-list li.done ha-icon {
-        color: #22c55e;
+        color: var(--sc-success);
       }
 
       .completion-steps small {
@@ -7705,9 +7978,9 @@ class SimpleChoresCard extends LitElement {
       }
 
       .focus-chip.active {
-        background: linear-gradient(to right, #06b6d4, #3b82f6);
+        background: var(--sc-accent);
         border-color: transparent;
-        color: white;
+        color: var(--sc-on-accent);
       }
 
       .focus-chip:disabled {
@@ -7785,8 +8058,8 @@ class SimpleChoresCard extends LitElement {
         gap: 4px;
         padding: 3px 10px;
         border-radius: 999px;
-        background: rgba(249, 115, 22, 0.15);
-        color: #f97316;
+        background: rgba(var(--sc-accent-rgb), 0.15);
+        color: var(--sc-accent-dark);
         font-weight: 600;
         white-space: nowrap;
       }
@@ -7805,7 +8078,7 @@ class SimpleChoresCard extends LitElement {
       .focus-progress-fill {
         height: 100%;
         border-radius: 999px;
-        background: linear-gradient(to right, #06b6d4, #22c55e);
+        background: var(--sc-success);
         transition: width 0.4s ease;
       }
 
@@ -7857,10 +8130,10 @@ class SimpleChoresCard extends LitElement {
         flex-direction: column;
         gap: 10px;
         padding: 16px;
-        border: 2px solid var(--divider-color);
-        border-radius: 16px;
-        background: var(--card-background-color);
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+        border: 2px solid transparent;
+        border-radius: 18px;
+        background: var(--sc-paper);
+        box-shadow: var(--sc-shadow);
       }
 
       .focus-card.expanded {
@@ -7871,7 +8144,7 @@ class SimpleChoresCard extends LitElement {
       }
 
       .focus-card.overdue {
-        border-color: var(--error-color, #ef4444);
+        border-color: var(--sc-danger);
       }
 
       .focus-card-room {
@@ -7893,7 +8166,7 @@ class SimpleChoresCard extends LitElement {
         margin-left: auto;
         padding: 2px 8px;
         border-radius: 999px;
-        background: var(--error-color, #ef4444);
+        background: var(--sc-danger);
         color: white;
         font-size: 0.9em;
         letter-spacing: 0;
@@ -7935,7 +8208,7 @@ class SimpleChoresCard extends LitElement {
       }
 
       .focus-time-chip.running {
-        background: var(--error-color, #ef4444);
+        background: var(--sc-danger);
         color: white;
       }
 
@@ -8002,7 +8275,7 @@ class SimpleChoresCard extends LitElement {
       .focus-steps-fill {
         height: 100%;
         border-radius: 999px;
-        background: #22c55e;
+        background: var(--sc-success);
         transition: width 0.3s ease;
       }
 
@@ -8041,7 +8314,7 @@ class SimpleChoresCard extends LitElement {
       }
 
       .focus-step.done ha-icon {
-        color: #22c55e;
+        color: var(--sc-success);
       }
 
       .focus-step.done span {
@@ -8075,12 +8348,12 @@ class SimpleChoresCard extends LitElement {
       }
 
       .focus-timer-ring .ring-value {
-        stroke: #06b6d4;
+        stroke: var(--sc-accent);
         transition: stroke-dashoffset 1s linear;
       }
 
       .focus-timer.finished .ring-value {
-        stroke: var(--error-color, #ef4444);
+        stroke: var(--sc-danger);
       }
 
       .focus-timer-text {
@@ -8091,7 +8364,7 @@ class SimpleChoresCard extends LitElement {
       }
 
       .focus-timer.finished .focus-timer-text {
-        color: var(--error-color, #ef4444);
+        color: var(--sc-danger);
       }
 
       /* --- Actions --- */
@@ -8128,7 +8401,7 @@ class SimpleChoresCard extends LitElement {
       }
 
       .focus-action.done {
-        background: #22c55e;
+        background: var(--sc-success);
         color: white;
       }
 
@@ -8154,7 +8427,7 @@ class SimpleChoresCard extends LitElement {
 
       .focus-mini-btn.done {
         flex: 1.6;
-        background: #22c55e;
+        background: var(--sc-success);
         color: white;
       }
 
@@ -8192,7 +8465,7 @@ class SimpleChoresCard extends LitElement {
       }
 
       .focus-empty.done ha-icon {
-        color: #22c55e;
+        color: var(--sc-success);
       }
 
       .focus-empty h3 {

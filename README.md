@@ -497,6 +497,16 @@ focus_layout: board
 
 A ready-made panel dashboard is in [`dashboards/chores-display.yaml`](dashboards/chores-display.yaml).
 
+### Theming
+
+The card has no colours of its own. Everything resolves from the active Home Assistant
+theme (`primary-color`, `success-color`, `error-color`, `card-background-color`,
+`ha-font-family-heading` and friends), so a themed dashboard restyles the card with no
+card config. On a stock theme it falls back to a warm paper look. The bundled chores
+dashboard sets `theme: Headwaters Scene`, which paints an illustrated landscape behind
+translucent cream cards; a theme that sets `success-color` and `error-color` also
+recolours the done and overdue states.
+
 Add time estimates and steps from the normal Add / Edit Chore forms, or via
 `add_chore` / `update_chore`:
 
