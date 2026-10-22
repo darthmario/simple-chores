@@ -44,7 +44,11 @@ mypy custom_components/simple_chores --config-file pyproject.toml
 ```
 
 CI (`.github/workflows/ci.yaml`) runs all of these, plus `node --check` on the card and
-hassfest, on every PR to `main`. `main` is protected, so changes land through pull requests.
+hassfest, on every PR to `main`. A `Card Version` job fails any PR that changes the card
+without bumping `manifest.json` (rule 4 below), and the Python coverage floor is 50%. `main`
+is protected by a ruleset that requires a pull request and all six checks. No reviewer is
+required, since Nate is the only collaborator; the admin role can bypass the checks when
+merging a pull request but cannot push to `main` directly.
 
 ## Data model
 
