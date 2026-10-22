@@ -694,6 +694,7 @@ class SimpleChoresCard extends LitElement {
       hide_stats: false,
       compact_mode: false,
       focus_layout: "auto",
+      transparent: false,
       ...config
     };
 
@@ -731,7 +732,8 @@ class SimpleChoresCard extends LitElement {
 
     const cardClasses = [
       this.config.full_width ? 'full-width' : '',
-      this.config.compact_mode ? 'compact' : ''
+      this.config.compact_mode ? 'compact' : '',
+      this.config.transparent ? 'transparent' : ''
     ].filter(Boolean).join(' ');
 
     // Count chores per room for the dropdown
@@ -1116,6 +1118,7 @@ class SimpleChoresCard extends LitElement {
           <div class="stat clickable" @click=${this._openAllChoresModal} title="View and manage all active chores">
             <span class="stat-value">${total}</span>
             <span class="stat-label">Active Chores</span>
+            <span class="stat-hint">View all<ha-icon icon="mdi:chevron-right"></ha-icon></span>
           </div>
           <button
             class="stats-expand-btn ${this._showExpandedStats ? 'expanded' : ''}"
@@ -5539,6 +5542,101 @@ class SimpleChoresCard extends LitElement {
         --sc-critter-belly: #f1cf9b;
       }
 
+      /* Transparent mode, for a panel dashboard with a scene behind it. The
+         card itself disappears and every row, tile and control floats as its
+         own piece of translucent paper, the way the Headwaters wall card
+         lays out its home screen. Text that sits straight on the scene uses
+         the scene's ink, which the scene script lightens at night. */
+      ha-card.transparent {
+        background: transparent;
+        box-shadow: none;
+        border: none;
+        --sc-paper: var(--sc-surface);
+      }
+
+      ha-card.transparent .card-header {
+        border-bottom: none;
+      }
+
+      ha-card.transparent .card-title,
+      ha-card.transparent .section h3,
+      ha-card.transparent .header-ring-label {
+        color: var(--hw-scene-ink, var(--sc-ink));
+      }
+
+      ha-card.transparent .card-greeting {
+        color: var(--hw-scene-ink-soft, var(--sc-ink-soft));
+      }
+
+      ha-card.transparent .header-ring .ring-track {
+        stroke: rgba(255, 255, 255, 0.55);
+      }
+
+      ha-card.transparent .chore-card,
+      ha-card.transparent .stat,
+      ha-card.transparent .stats-expand-btn,
+      ha-card.transparent .stats-dashboard,
+      ha-card.transparent .no-chores,
+      ha-card.transparent .load-more-btn,
+      ha-card.transparent .dropdown-btn,
+      ha-card.transparent .icon-btn,
+      ha-card.transparent .focus-chip,
+      ha-card.transparent .focus-icon-btn,
+      ha-card.transparent .focus-progress,
+      ha-card.transparent .focus-card,
+      ha-card.transparent .focus-empty,
+      ha-card.transparent .calendar-view {
+        background: var(--sc-surface);
+        box-shadow: var(--sc-shadow);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+      }
+
+      ha-card.transparent .focus-progress {
+        padding: 12px 16px;
+        border-radius: 18px;
+      }
+
+      ha-card.transparent .focus-empty,
+      ha-card.transparent .calendar-view,
+      ha-card.transparent .stats-dashboard {
+        border-radius: 18px;
+        padding: 16px;
+      }
+
+      ha-card.transparent .chore-card:hover,
+      ha-card.transparent .focus-card.overdue {
+        border-color: transparent;
+      }
+
+      ha-card.transparent .focus-card.overdue {
+        box-shadow: var(--sc-shadow), inset 0 0 0 2px var(--sc-danger);
+      }
+
+      ha-card.transparent .chore-steps,
+      ha-card.transparent .focus-steps-bar,
+      ha-card.transparent .focus-progress-track {
+        background: rgba(var(--sc-accent-rgb), 0.1);
+      }
+
+      /* States the floating-paper rule above would otherwise flatten. A
+         tint alone would be mostly scene, so layer it over the surface. */
+      ha-card.transparent .focus-chip.active,
+      ha-card.transparent .icon-btn.active {
+        background: var(--sc-accent);
+      }
+
+      ha-card.transparent .icon-btn:hover,
+      ha-card.transparent .dropdown-btn:hover,
+      ha-card.transparent .stat.attention {
+        background: linear-gradient(rgba(var(--sc-accent-rgb), 0.16), rgba(var(--sc-accent-rgb), 0.16)), var(--sc-surface);
+      }
+
+      ha-card.transparent .stat.warning,
+      ha-card.transparent .chore-card.overdue {
+        background: linear-gradient(rgba(var(--sc-danger-rgb), 0.14), rgba(var(--sc-danger-rgb), 0.14)), var(--sc-surface);
+      }
+
       /* Full width mode - makes card span entire column width */
       ha-card.full-width {
         grid-column: 1 / -1;
@@ -5674,7 +5772,10 @@ class SimpleChoresCard extends LitElement {
 
       .header-ring-label {
         position: absolute;
-        inset: 0;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 0;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -5736,7 +5837,7 @@ class SimpleChoresCard extends LitElement {
         align-items: center;
         gap: 6px;
         background: var(--sc-paper);
-        border: none;
+        border: 1px solid var(--sc-line);
         border-radius: 999px;
         padding: 7px 12px;
         color: var(--sc-ink);
@@ -5819,7 +5920,7 @@ class SimpleChoresCard extends LitElement {
       /* Icon buttons in header */
       .icon-btn {
         background: var(--sc-paper);
-        border: none;
+        border: 1px solid var(--sc-line);
         border-radius: 999px;
         width: 36px;
         height: 36px;
@@ -6448,19 +6549,33 @@ class SimpleChoresCard extends LitElement {
         text-align: center;
       }
 
-      /* Active chores - opens the All Chores modal */
+      /* Active chores - opens the All Chores modal, and says so */
       .stat.clickable {
         cursor: pointer;
+        border-color: rgba(var(--sc-success-rgb), 0.45);
       }
 
       .stat.clickable .stat-value {
         color: var(--sc-success);
       }
 
+      .stat-hint {
+        display: inline-flex;
+        align-items: center;
+        margin-top: 4px;
+        font-size: 0.72em;
+        font-weight: 700;
+        color: var(--sc-success);
+      }
+
+      .stat-hint ha-icon {
+        --mdc-icon-size: 14px;
+      }
+
       .stat.clickable:hover {
         transform: translateY(-2px);
         box-shadow: var(--sc-shadow);
-        border-color: var(--sc-line);
+        border-color: var(--sc-success);
       }
 
       /* Statistics Dashboard Expand Button */
@@ -6868,14 +6983,25 @@ class SimpleChoresCard extends LitElement {
         height: 36px;
         background: transparent;
         border: 2.5px solid var(--sc-ink-muted);
-        color: transparent;
+        color: var(--sc-ink-soft);
         margin-right: 6px;
+      }
+
+      /* A faint check so the circle reads as a checkbox on a touch screen,
+         where there is no hover to reveal it */
+      .chore-action-btn.complete ha-icon {
+        opacity: 0.45;
       }
 
       .chore-action-btn.complete:hover {
         border-color: var(--sc-success);
         color: var(--sc-success);
         transform: scale(1.05);
+      }
+
+      .chore-action-btn.complete:hover ha-icon,
+      .chore-action-btn.complete.done ha-icon {
+        opacity: 1;
       }
 
       .chore-action-btn.complete.done {
@@ -6899,7 +7025,7 @@ class SimpleChoresCard extends LitElement {
         width: 32px;
         height: 32px;
         background: transparent;
-        color: var(--sc-ink-muted);
+        color: var(--sc-ink-soft);
       }
 
       .chore-action-btn.secondary:hover {
@@ -8493,7 +8619,10 @@ class SimpleChoresCard extends LitElement {
       /* --- Confetti --- */
       .focus-confetti {
         position: absolute;
-        inset: 0;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 0;
         overflow: hidden;
         pointer-events: none;
         z-index: 5;
@@ -8587,6 +8716,10 @@ class SimpleChoresCardEditor extends LitElement {
     return this._config?.compact_mode || false;
   }
 
+  get _transparent() {
+    return this._config?.transparent || false;
+  }
+
   render() {
     if (!this.hass) {
       return html``;
@@ -8658,6 +8791,16 @@ class SimpleChoresCardEditor extends LitElement {
             <ha-checkbox
               .checked=${this._hide_stats}
               .configValue=${"hide_stats"}
+              @change=${this._valueChanged}
+            ></ha-checkbox>
+          </ha-formfield>
+        </div>
+
+        <div class="option">
+          <ha-formfield label="Transparent card (for a panel with a scene behind it)">
+            <ha-checkbox
+              .checked=${this._transparent}
+              .configValue=${"transparent"}
               @change=${this._valueChanged}
             ></ha-checkbox>
           </ha-formfield>

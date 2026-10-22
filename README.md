@@ -429,6 +429,7 @@ A beautiful custom card is **automatically installed** with the integration!
 | `full_width` | boolean | `false` | Make card span full column width |
 | `compact_mode` | boolean | `false` | Reduced padding for smaller displays |
 | `hide_stats` | boolean | `false` | Hide the stats bar |
+| `transparent` | boolean | `false` | Drop the card's own background so a themed scene shows through; rows, tiles and controls float as translucent paper. Meant for a panel dashboard |
 | `my_chores_default` | boolean | `false` | Start with "My Chores" filter enabled |
 | `show_completed` | boolean | `false` | Show completed one-off chores |
 | `default_room` | string | `"all"` | Default room filter on load |
@@ -503,8 +504,9 @@ The card has no colours of its own. Everything resolves from the active Home Ass
 theme (`primary-color`, `success-color`, `error-color`, `card-background-color`,
 `ha-font-family-heading` and friends), so a themed dashboard restyles the card with no
 card config. On a stock theme it falls back to a warm paper look. The bundled chores
-dashboard sets `theme: Headwaters Scene`, which paints an illustrated landscape behind
-translucent cream cards; a theme that sets `success-color` and `error-color` also
+dashboard sets `theme: Headwaters Scene`, which paints an illustrated landscape, and
+`transparent: true` on the card so the landscape shows between the rows rather than
+behind one big cream card. A theme that sets `success-color` and `error-color` also
 recolours the done and overdue states.
 
 Add time estimates and steps from the normal Add / Edit Chore forms, or via

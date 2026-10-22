@@ -18,3 +18,6 @@ views:
         hide_stats: false
         default_view: focus
         focus_layout: board
+        # Let the scene show through: the card disappears and each row,
+        # tile and control floats as its own piece of translucent paper.
+        transparent: true
