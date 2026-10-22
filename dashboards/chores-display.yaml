@@ -3,6 +3,11 @@ views:
   - title: Chores
     path: default_view
     type: panel
+    # The Headwaters Scene theme (from darthmario/ha-dashboards) paints the
+    # living landscape behind the card and supplies its fonts and palette.
+    # The card reads the theme's variables, so on a stock theme it just falls
+    # back to a plain paper look.
+    theme: Headwaters Scene
     cards:
       # Wall display (Cozyla): open straight into the focus view as a board of
       # big touch targets. Swap focus_layout to "deck" for a one-at-a-time

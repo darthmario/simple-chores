@@ -1037,6 +1037,86 @@ await check('the Complete Chore modal skips the step block for a chore without s
   assert.ok(!text.includes('steps ticked'));
 });
 
+// --- Paper header: greeting and day ring ---------------------------------
+
+await check('the greeting follows the time of day', () => {
+  const card = makeCard();
+  const at = (hour) => card._greetingWord(new SandboxDate(2026, 9, 22, hour, 0, 0));
+  assert.equal(at(3), 'Up late');
+  assert.equal(at(8), 'Good morning');
+  assert.equal(at(13), 'Good afternoon');
+  assert.equal(at(19), 'Good evening');
+  assert.equal(at(22), 'Winding down');
+});
+
+await check('the progress phrase reads like a note, not a status panel', () => {
+  const card = makeCard();
+  assert.equal(card._progressPhrase(0, 3), '3 to go.');
+  assert.equal(card._progressPhrase(2, 3), '3 to go, 2 done.');
+  assert.equal(card._progressPhrase(4, 0), 'All done, nice.');
+  assert.equal(card._progressPhrase(0, 0), 'Nothing due today.');
+});
+
+await check('the day ring closes only when nothing is left', () => {
+  const card = makeCard();
+  const half = renderToText(card._renderDayRing(2, 2));
+  const done = renderToText(card._renderDayRing(3, 0));
+  const none = renderToText(card._renderDayRing(0, 0));
+  assert.ok(half.includes('2/4'), half);
+  assert.ok(!half.includes('complete'), 'half-done is not complete');
+  assert.ok(done.includes('3/3') && done.includes('complete'));
+  assert.ok(done.includes('stroke-dashoffset="0.0"'), 'a finished day fills the ring');
+  assert.ok(!none.includes('complete'), 'an empty day is not a finished one');
+});
+
+await check('the header greets with the day\'s progress and streak', () => {
+  const card = makeCard({ done_today: 1, streak_days: 4, total_completions: 9 });
+  const text = renderToText(card.render());
+  assert.ok(text.includes('to go, 1 done.'), text.slice(0, 500));
+  assert.ok(text.includes('header-streak'), 'streak chip shows at 4 days');
+  const quiet = renderToText(makeCard({ done_today: 0, streak_days: 1, total_completions: 1 }).render());
+  assert.ok(!quiet.includes('header-streak'), 'no streak chip for a single day');
+});
+
+await check('empty lists show the sleeping critter', () => {
+  const card = makeCard(null, []);
+  const text = renderToText(card.render());
+  assert.ok(text.includes('sc-critter'));
+  assert.ok(text.includes('No chores due today'));
+});
+
+await check('the focus view uses the critter when all caught up', () => {
+  const card = makeCard(null, []);
+  card._currentView = 'focus';
+  const text = renderToText(card._renderFocusEmpty([]));
+  assert.ok(text.includes('sc-critter'));
+  assert.ok(text.includes('All caught up'));
+});
+
+// --- Celebrations outside the focus view ---------------------------------
+
+await check('completing from the list modal fires the confetti and fills the circle', async () => {
+  const card = makeCard();
+  card.hass.callService = async () => {};
+  card._openCompleteChoreModal(card._choresData.byId.get('a'));
+  card._formData.completion.completedBy = 'u1';
+  await card._submitCompleteChore();
+  assert.ok(card._celebration && card._celebration.id === 'a', 'celebration is running for chore a');
+  const row = renderToText(card._renderChore(chore({ id: 'a' })));
+  assert.ok(row.includes('complete done'), 'the check circle fills in');
+  const other = renderToText(card._renderChore(chore({ id: 'b' })));
+  assert.ok(!other.includes('complete done'), 'other rows stay empty');
+  const page = renderToText(card.render());
+  assert.ok(page.includes('focus-confetti'), 'confetti renders in the list view');
+});
+
+await check('confetti colours come from the theme tokens', () => {
+  const card = makeCard();
+  card._celebrate('a');
+  assert.ok(card._celebration.particles.every(p => /^(var\(--sc-|#)/.test(p.color)));
+  assert.ok(card._celebration.particles.some(p => p.color === 'var(--sc-accent)'));
+});
+
 // --- Report ---------------------------------------------------------------
 
 let failed = 0;
