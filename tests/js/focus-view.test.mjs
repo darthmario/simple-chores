@@ -935,6 +935,108 @@ await check('toggling the prompt twice closes it', () => {
   assert.equal(card._estimatePromptFor, null);
 });
 
+// --- Steps in the chore list ---------------------------------------------
+
+const STEPPED = () => chore({
+  id: 's', name: 'Clean the bathroom',
+  steps: ['Wipe the mirror', 'Scrub the sink', 'Mop the floor'],
+  step_progress: [],
+});
+
+await check('a row with steps shows a step chip; one without does not', () => {
+  const card = makeCard();
+  const withSteps = renderToText(card._renderChore(STEPPED()));
+  const without = renderToText(card._renderChore(chore({ id: 'a' })));
+  assert.ok(withSteps.includes('0/3 steps'), withSteps.slice(0, 300));
+  assert.ok(!without.includes('steps'), 'plain rows stay plain');
+});
+
+await check('an untouched checklist stays collapsed in the list', () => {
+  const card = makeCard();
+  const text = renderToText(card._renderChore(STEPPED()));
+  assert.ok(!text.includes('Wipe the mirror'), 'steps are not rendered until opened');
+  assert.ok(!text.includes('chore-steps-bar'), 'no progress bar at 0/3');
+});
+
+await check('a checklist opens by itself once a step is ticked', () => {
+  const card = makeCard();
+  const text = renderToText(card._renderChore(STEPPED()));
+  const started = renderToText(card._renderChore({ ...STEPPED(), step_progress: [1] }));
+  assert.ok(!text.includes('Scrub the sink'));
+  assert.ok(started.includes('Scrub the sink'), 'checklist is open');
+  assert.ok(started.includes('1/3 steps'));
+  assert.ok(started.includes('mdi:chevron-up'), 'chip offers to collapse it');
+});
+
+await check('a pending optimistic tick counts as started', () => {
+  const card = makeCard();
+  card._stepOptimistic = { 's:0': true };
+  const text = renderToText(card._renderChore(STEPPED()));
+  assert.ok(text.includes('1/3 steps'));
+  assert.ok(text.includes('Mop the floor'), 'opened on the local tick');
+});
+
+await check('tapping the chip collapses a started checklist and leaves a thin bar', () => {
+  const card = makeCard();
+  const started = { ...STEPPED(), step_progress: [0, 1] };
+  card._toggleStepsExpanded(started);
+  const text = renderToText(card._renderChore(started));
+  assert.ok(!text.includes('Wipe the mirror'), 'checklist hidden');
+  assert.ok(text.includes('chore-steps-bar'), 'progress bar shows instead');
+  assert.ok(text.includes('width: 67%'), text.match(/width: \d+%/)?.[0]);
+  card._toggleStepsExpanded(started);
+  assert.ok(renderToText(card._renderChore(started)).includes('Wipe the mirror'), 'reopens');
+});
+
+await check('tapping the chip opens an untouched checklist', () => {
+  const card = makeCard();
+  const fresh = STEPPED();
+  card._toggleStepsExpanded(fresh);
+  assert.ok(renderToText(card._renderChore(fresh)).includes('Wipe the mirror'));
+  assert.ok(!renderToText(card._renderChore(chore({ id: 'other', steps: ['x'] }))).includes('>x<'),
+    'other rows are unaffected');
+});
+
+await check('completing a chore forgets its explicit open/closed state', async () => {
+  const card = makeCard();
+  const started = { ...STEPPED(), step_progress: [0] };
+  card._toggleStepsExpanded(started);              // explicitly closed
+  assert.equal(card._expandedSteps.s, false);
+  card.hass.callService = async () => {};
+  await card._focusAction(started, 'complete_chore', {}, null);
+  assert.ok(!('s' in card._expandedSteps), 'back to the default rule');
+  await card._focusAction(started, 'snooze_chore', {}, null);
+  card._toggleStepsExpanded(started);
+  await card._focusAction(started, 'snooze_chore', {}, null);
+  assert.ok('s' in card._expandedSteps, 'a snooze keeps the choice, like it keeps progress');
+});
+
+await check('the board card follows the same open-once-started rule', () => {
+  const card = makeCard();
+  const fresh = renderToText(card._renderFocusCard(STEPPED()));
+  const started = renderToText(card._renderFocusCard({ ...STEPPED(), step_progress: [2] }));
+  assert.ok(!fresh.includes('Wipe the mirror'));
+  assert.ok(started.includes('Wipe the mirror'));
+});
+
+await check('the Complete Chore modal lists the steps with their ticks', () => {
+  const card = makeCard(null, [...CHORES, { ...STEPPED(), step_progress: [0] }]);
+  card._openCompleteChoreModal(card._choresData.byId.get('s'));
+  const text = renderToText(card._renderCompleteChoreModal());
+  assert.ok(text.includes('1 of 3 steps ticked'), text.slice(0, 400));
+  assert.ok(text.includes('Wipe the mirror'));
+  assert.ok(text.includes('Mop the floor'));
+  assert.ok(text.includes('mdi:check-circle'), 'ticked step shows a check');
+  assert.ok(text.includes('mdi:circle-outline'), 'unticked step shows an empty circle');
+});
+
+await check('the Complete Chore modal skips the step block for a chore without steps', () => {
+  const card = makeCard();
+  card._openCompleteChoreModal(card._choresData.byId.get('a'));
+  const text = renderToText(card._renderCompleteChoreModal());
+  assert.ok(!text.includes('steps ticked'));
+});
+
 // --- Report ---------------------------------------------------------------
 
 let failed = 0;

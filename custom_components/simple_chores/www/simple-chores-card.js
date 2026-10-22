@@ -1252,6 +1252,10 @@ class SimpleChoresCard extends LitElement {
     const isOverdue = this._parseLocalDate(dueDate) < new Date().setHours(0,0,0,0);
     const isMenuOpen = this._activeChoreMenu === chore.id;
     const estimateMinutes = this._choreMinutes(chore);
+    const steps = chore.steps || [];
+    const doneSteps = this._countDoneSteps(chore);
+    const stepsOpen = steps.length > 0 && this._stepsOpen(chore, doneSteps);
+    const stepPercent = steps.length > 0 ? Math.round((doneSteps / steps.length) * 100) : 0;
 
     // Use modal-specific handlers if in modal context
     const completeHandler = inModal
@@ -1311,11 +1315,33 @@ class SimpleChoresCard extends LitElement {
                   ${assignedUserName}
                 </span>
               ` : ''}
+              ${steps.length > 0 ? html`
+                <span class="chore-meta-separator">·</span>
+                <button
+                  class="chore-meta-steps ${stepsOpen ? 'open' : ''}"
+                  title="${stepsOpen ? 'Hide steps' : 'Show steps'}"
+                  aria-expanded=${stepsOpen}
+                  @click=${(e) => { e.stopPropagation(); this._toggleStepsExpanded(chore); }}
+                >
+                  <ha-icon icon="${stepsOpen ? 'mdi:chevron-up' : 'mdi:format-list-checks'}"></ha-icon>
+                  ${doneSteps}/${steps.length} steps
+                </button>
+              ` : ''}
             </div>
+            ${steps.length > 0 && doneSteps > 0 && !stepsOpen ? html`
+              <div class="focus-steps-bar chore-steps-bar" title="${doneSteps} of ${steps.length} steps done">
+                <div class="focus-steps-fill" style="width: ${stepPercent}%"></div>
+              </div>
+            ` : ''}
             ${this._estimatePromptFor === chore.id ? html`
               <div class="chore-estimate-row" @click=${(e) => e.stopPropagation()}>
                 <span class="chore-estimate-label">How long does this take?</span>
                 ${this._renderEstimatePrompt(chore)}
+              </div>
+            ` : ''}
+            ${stepsOpen ? html`
+              <div class="chore-steps" @click=${(e) => e.stopPropagation()}>
+                ${this._renderSteps(chore, steps, doneSteps)}
               </div>
             ` : ''}
           </div>
@@ -1924,6 +1950,12 @@ class SimpleChoresCard extends LitElement {
                       <div class="agenda-chore-content">
                         <span class="agenda-chore-name">${chore.name}</span>
                         ${roomName ? html`<span class="agenda-chore-room">${roomName}</span>` : ''}
+                        ${!isProjected && (chore.steps || []).length > 0 ? html`
+                          <span class="agenda-chore-steps">
+                            <ha-icon icon="mdi:format-list-checks"></ha-icon>
+                            ${this._countDoneSteps(chore)}/${chore.steps.length}
+                          </span>
+                        ` : ''}
                         ${isProjected ? html`<span class="agenda-chore-projected-badge">Projected</span>` : ''}
                       </div>
                       ${!isProjected ? html`
@@ -2589,6 +2621,9 @@ class SimpleChoresCard extends LitElement {
   async _focusAction(chore, service, data, successMessage) {
     this._stopTimer(chore.id);
     this._dismissFromFocus(chore.id);
+    if (service === "complete_chore" || service === "skip_chore") {
+      this._forgetStepsExpanded(chore.id);
+    }
     try {
       await this.hass.callService("simple_chores", service, { chore_id: chore.id, ...data });
       if (successMessage) this._showToast(successMessage);
@@ -2650,8 +2685,31 @@ class SimpleChoresCard extends LitElement {
     }
   }
 
-  _toggleStepsExpanded(choreId) {
-    this._expandedSteps = { ...this._expandedSteps, [choreId]: !this._expandedSteps[choreId] };
+  /**
+   * Whether a chore's checklist is showing. An explicit tap wins; otherwise
+   * the checklist opens itself once any step is ticked, so a part-done chore
+   * reads as part-done from across the room without anyone tapping it.
+   */
+  _stepsOpen(chore, doneSteps = this._countDoneSteps(chore)) {
+    const explicit = this._expandedSteps[chore.id];
+    if (explicit !== undefined) return explicit;
+    return doneSteps > 0;
+  }
+
+  _toggleStepsExpanded(chore) {
+    this._expandedSteps = { ...this._expandedSteps, [chore.id]: !this._stepsOpen(chore) };
+  }
+
+  /**
+   * Drop any explicit open/closed choice for a chore. Called when the chore
+   * is completed or skipped, since the backend clears its progress then and
+   * a fresh checklist should fall back to the "open once started" rule.
+   */
+  _forgetStepsExpanded(choreId) {
+    if (!(choreId in this._expandedSteps)) return;
+    const next = { ...this._expandedSteps };
+    delete next[choreId];
+    this._expandedSteps = next;
   }
 
   // --- Inline estimate capture --------------------------------------------
@@ -2970,7 +3028,7 @@ class SimpleChoresCard extends LitElement {
     const roomIcon = this._getRoomIcon(chore.room_id || chore.room);
     const overdueDays = Number(chore.days_overdue) || 0;
     const timerRunning = this._focusTimer && this._focusTimer.choreId === chore.id;
-    const stepsOpen = expanded || this._expandedSteps[chore.id];
+    const stepsOpen = expanded || this._stepsOpen(chore, doneSteps);
 
     return html`
       <div class="focus-card ${expanded ? 'expanded' : 'compact'} ${overdueDays > 0 ? 'overdue' : ''}">
@@ -2998,7 +3056,7 @@ class SimpleChoresCard extends LitElement {
             </button>
           ` : this._renderEstimatePrompt(chore)}
           ${steps.length > 0 && !expanded ? html`
-            <button class="focus-steps-toggle" @click=${() => this._toggleStepsExpanded(chore.id)}>
+            <button class="focus-steps-toggle" @click=${() => this._toggleStepsExpanded(chore)}>
               <ha-icon icon="${stepsOpen ? 'mdi:chevron-up' : 'mdi:format-list-checks'}"></ha-icon>
               <span>${doneSteps}/${steps.length}</span>
             </button>
@@ -4928,6 +4986,7 @@ class SimpleChoresCard extends LitElement {
 
 
       await this.hass.callService("simple_chores", "complete_chore", serviceData);
+      this._forgetStepsExpanded(completionData.choreId);
 
       // If the assignment selection changed, update the chore assignment.
       // An empty string explicitly clears the assignment on the backend.
@@ -5152,6 +5211,11 @@ class SimpleChoresCard extends LitElement {
     }
 
     const users = this._getUsers();
+    // Look the chore up fresh so the steps reflect the latest ticks, not a
+    // snapshot from when the modal opened
+    const chore = this._choresData.byId.get(this._formData.completion.choreId);
+    const steps = (chore && chore.steps) || [];
+    const doneSteps = chore ? this._countDoneSteps(chore) : 0;
 
     const body = html`
             <div class="completion-info">
@@ -5161,6 +5225,27 @@ class SimpleChoresCard extends LitElement {
               ` : ''}
               <p>Mark this chore as completed and optionally reassign for next time.</p>
             </div>
+
+            ${steps.length > 0 ? html`
+              <div class="completion-steps">
+                <div class="completion-steps-title">
+                  <ha-icon icon="mdi:format-list-checks"></ha-icon>
+                  <span>${doneSteps} of ${steps.length} steps ticked</span>
+                </div>
+                <ul class="completion-step-list">
+                  ${steps.map((step, index) => {
+                    const done = this._stepIsDone(chore, index);
+                    return html`
+                      <li class="${done ? 'done' : ''}">
+                        <ha-icon icon="${done ? 'mdi:check-circle' : 'mdi:circle-outline'}"></ha-icon>
+                        <span>${step}</span>
+                      </li>
+                    `;
+                  })}
+                </ul>
+                <small>Completing clears the checklist for next time.</small>
+              </div>
+            ` : ''}
             
             <div class="form-group">
               <label for="completed-by">Who completed this chore? *</label>
@@ -7442,6 +7527,128 @@ class SimpleChoresCard extends LitElement {
       .chore-estimate-label {
         font-size: 0.85em;
         color: var(--secondary-text-color);
+      }
+
+      /* --- Steps in list rows --- */
+      .chore-meta-steps {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 1px 8px;
+        border: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
+        border-radius: 999px;
+        background: transparent;
+        color: var(--secondary-text-color);
+        font-size: inherit;
+        font-family: inherit;
+        cursor: pointer;
+        vertical-align: middle;
+      }
+
+      .chore-meta-steps:hover,
+      .chore-meta-steps.open {
+        border-color: #22c55e;
+        color: #16a34a;
+      }
+
+      .chore-meta-steps ha-icon {
+        --mdc-icon-size: 14px;
+      }
+
+      .chore-steps-bar {
+        margin-top: 6px;
+        max-width: 240px;
+      }
+
+      .chore-steps {
+        margin-top: 8px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: var(--secondary-background-color);
+      }
+
+      .chore-steps .focus-steps-bar {
+        background: var(--card-background-color, #fff);
+      }
+
+      .chore-steps .focus-step {
+        padding: 6px;
+        font-size: 0.95em;
+      }
+
+      .chore-steps .focus-step:hover {
+        background: var(--card-background-color, #fff);
+      }
+
+      /* --- Steps in the Complete Chore modal --- */
+      .completion-steps {
+        margin: 0 0 16px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: var(--secondary-background-color);
+      }
+
+      .completion-steps-title {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.9em;
+        font-weight: 500;
+        color: var(--primary-text-color);
+        margin-bottom: 6px;
+      }
+
+      .completion-steps-title ha-icon {
+        --mdc-icon-size: 18px;
+        color: #22c55e;
+      }
+
+      .completion-step-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .completion-step-list li {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--primary-text-color);
+      }
+
+      .completion-step-list li ha-icon {
+        --mdc-icon-size: 18px;
+        color: var(--secondary-text-color);
+      }
+
+      .completion-step-list li.done {
+        color: var(--secondary-text-color);
+        text-decoration: line-through;
+      }
+
+      .completion-step-list li.done ha-icon {
+        color: #22c55e;
+      }
+
+      .completion-steps small {
+        display: block;
+        margin-top: 8px;
+        color: var(--secondary-text-color);
+      }
+
+      .agenda-chore-steps {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        font-size: 0.8em;
+        color: var(--secondary-text-color);
+      }
+
+      .agenda-chore-steps ha-icon {
+        --mdc-icon-size: 14px;
       }
 
       .chores-loading {
