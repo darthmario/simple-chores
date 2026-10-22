@@ -1117,6 +1117,23 @@ await check('confetti colours come from the theme tokens', () => {
   assert.ok(card._celebration.particles.some(p => p.color === 'var(--sc-accent)'));
 });
 
+// --- Transparent mode and affordances ------------------------------------
+
+await check('transparent: true marks the card so the scene can show through', () => {
+  const plain = makeCard();
+  assert.ok(!renderToText(plain.render()).includes('class="transparent"'));
+  const card = makeCard();
+  card.setConfig({ type: 'custom:simple-chores-card', transparent: true });
+  const text = renderToText(card.render());
+  assert.ok(/<ha-card class="[^"]*transparent/.test(text), text.slice(0, 200));
+});
+
+await check('the Active Chores tile says it opens the full list', () => {
+  const card = makeCard();
+  const text = renderToText(card._renderStats());
+  assert.ok(text.includes('View all'), 'tile carries a view-all hint');
+});
+
 // --- Report ---------------------------------------------------------------
 
 let failed = 0;
