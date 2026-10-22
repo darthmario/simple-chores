@@ -479,6 +479,12 @@ with a progress bar. Ticks are saved to the backend, so a chore started on one p
 shows as part-done on the display. Progress resets when the chore is completed or
 skipped, but survives a snooze.
 
+Steps show up outside the focus view too. List rows (and the All Chores modal) carry a
+`2/5 steps` chip that opens the same checklist inline; a checklist opens by itself once any
+step is ticked and stays collapsed until then. The Complete Chore modal lists the steps with
+their ticks so you can see what was done before you mark the whole chore complete, and the
+calendar agenda shows the count.
+
 **Setting it up for a wall display:**
 
 ```yaml
