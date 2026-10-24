@@ -436,6 +436,7 @@ class TestRefreshIsNotDebounced:
             "update_chore",
             "remove_chore",
             "toggle_step",
+            "undo",
             "add_room",
             "add_user",
         ],
@@ -459,6 +460,10 @@ class TestRefreshIsNotDebounced:
             await coordinator.async_remove_chore(chore["id"])
         elif action == "toggle_step":
             await coordinator.async_toggle_chore_step(chore["id"], 0)
+        elif action == "undo":
+            store.complete_chore(chore["id"], "u1", "Nate", next_due=TODAY)
+            coordinator.refresh_calls = 0
+            await coordinator.async_undo_completion(chore_id=chore["id"])
         elif action == "add_room":
             await coordinator.async_add_room("Garage")
         elif action == "add_user":

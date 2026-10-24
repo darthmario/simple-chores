@@ -512,10 +512,15 @@ class TestGetRecentHistory:
             "completed_by_name": "Alice",
         }
 
-    def test_drops_the_unused_id_field(self, store):
-        store._data["history"] = [self._entry(0, "2024-06-15T10:00:00+00:00")]
+    def test_keeps_the_id_and_drops_the_undo_snapshot(self, store):
+        raw = self._entry(0, "2024-06-15T10:00:00+00:00")
+        raw["previous"] = {"next_due": "2024-06-15"}
+        store._data["history"] = [raw]
         entry = store.get_recent_history()[0]
-        assert "id" not in entry
+        # The history modal undoes a completion by its id
+        assert entry["id"] == raw["id"]
+        # The snapshot is server-side only
+        assert "previous" not in entry
         # Everything the card actually reads survives
         assert entry["chore_id"] == "c1"
         assert entry["chore_name"] == "Vacuum"
@@ -718,3 +723,97 @@ class TestToggleChoreStep:
         store.toggle_chore_step(chore["id"], 0)
         store.snooze_chore(chore["id"])
         assert chore["step_progress"] == [0]
+
+
+class TestUndoCompletion:
+    """An accidental tap on "done" must be reversible, exactly."""
+
+    def test_completion_records_what_it_overwrote(self, store):
+        chore = _add_basic_chore(store, steps=["a", "b"])
+        store.toggle_chore_step(chore["id"], 0)
+        before_due = chore["next_due"]
+
+        store.complete_chore(chore["id"], "u1", "Nate", next_due=date(2024, 6, 22))
+
+        previous = store.history[-1]["previous"]
+        assert previous["next_due"] == before_due
+        assert previous["step_progress"] == [0]
+        assert previous["is_completed"] is False
+        assert previous["last_completed"] is None
+
+    def test_undo_restores_the_chore_and_drops_the_entry(self, store):
+        chore = _add_basic_chore(store, steps=["a", "b"])
+        store.toggle_chore_step(chore["id"], 1)
+        before_due = chore["next_due"]
+        store.complete_chore(chore["id"], "u1", "Nate", next_due=date(2024, 6, 22))
+        entry_id = store.history[-1]["id"]
+
+        result = store.undo_completion(history_id=entry_id)
+
+        assert result is chore
+        assert chore["next_due"] == before_due
+        assert chore["step_progress"] == [1]
+        assert chore["last_completed"] is None
+        assert chore["last_completed_by"] is None
+        assert chore["is_completed"] is False
+        assert store.history == []
+
+    def test_undo_by_chore_id_takes_the_newest_completion(self, store):
+        chore = _add_basic_chore(store)
+        store.complete_chore(chore["id"], "u1", "Nate", next_due=date(2024, 6, 22))
+        store.complete_chore(chore["id"], "u2", "Nova", next_due=date(2024, 6, 29))
+
+        store.undo_completion(chore_id=chore["id"])
+
+        assert len(store.history) == 1
+        assert store.history[0]["completed_by"] == "u1"
+        assert chore["next_due"] == "2024-06-22"
+        assert chore["last_completed_by"] == "u1"
+
+    def test_undo_brings_back_a_finished_one_off(self, store):
+        chore = _add_basic_chore(store, frequency="once")
+        store.complete_chore(chore["id"], "u1", "Nate", next_due=None)
+        assert chore["is_completed"] is True
+
+        store.undo_completion(chore_id=chore["id"])
+
+        assert chore["is_completed"] is False
+
+    def test_undo_without_a_match_returns_none(self, store):
+        chore = _add_basic_chore(store)
+        assert store.undo_completion(chore_id=chore["id"]) is None
+        assert store.undo_completion(history_id="nope") is None
+
+    def test_undo_needs_a_handle(self, store):
+        with pytest.raises(ValueError):
+            store.undo_completion()
+
+    def test_undo_of_a_deleted_chore_still_cleans_history(self, store):
+        chore = _add_basic_chore(store)
+        store.complete_chore(chore["id"], "u1", "Nate", next_due=date(2024, 6, 22))
+        store.remove_chore(chore["id"])
+
+        result = store.undo_completion(chore_id=chore["id"])
+
+        assert result["chore_id"] == chore["id"]
+        assert store.history == []
+
+    def test_old_entries_without_a_snapshot_are_removed_but_leave_the_chore(self, store):
+        chore = _add_basic_chore(store)
+        store.complete_chore(chore["id"], "u1", "Nate", next_due=date(2024, 6, 22))
+        del store.history[-1]["previous"]
+
+        result = store.undo_completion(chore_id=chore["id"])
+
+        assert result is chore
+        assert chore["next_due"] == "2024-06-22", "nothing to restore from, so the chore stays"
+        assert store.history == []
+
+    def test_snapshot_stays_out_of_the_published_history(self, store):
+        chore = _add_basic_chore(store)
+        store.complete_chore(chore["id"], "u1", "Nate", next_due=date(2024, 6, 22))
+
+        entry = store.get_recent_history()[0]
+
+        assert "previous" not in entry
+        assert entry["id"] == store.history[0]["id"], "the id is what the history modal undoes by"

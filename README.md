@@ -322,6 +322,22 @@ data:
   user_id: "user-uuid"  # Optional, defaults to current user
 ```
 
+#### `simple_chores.undo_completion`
+Reverse a completion marked by mistake. The history entry is removed and the chore goes
+back to where it was: due date, checklist progress and one-off flag are restored from a
+snapshot saved at completion time, so statistics, streaks and anything derived from
+history stay honest. Pass a `history_id` (from the history websocket) or a `chore_id`, in
+which case the newest completion of that chore is undone.
+
+```yaml
+service: simple_chores.undo_completion
+data:
+  chore_id: "abc123"
+```
+
+The card offers Undo on a toast for ten seconds after every completion, and on entries
+from the last 24 hours in the history modal.
+
 #### `simple_chores.skip_chore`
 Skip a chore to the next occurrence without marking complete.
 

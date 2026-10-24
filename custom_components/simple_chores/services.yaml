@@ -537,6 +537,27 @@ snooze_chore:
       selector:
         text:
 
+undo_completion:
+  name: Undo Completion
+  description: >-
+    Reverse a completion that was marked by mistake. Removes the history entry
+    and puts the chore back where it was (due date, checklist progress, one-off
+    flag). Give either a history entry ID or a chore ID; with a chore ID the
+    newest completion of that chore is undone.
+  fields:
+    history_id:
+      name: History ID
+      description: The ID of the completion to undo, from the history websocket.
+      required: false
+      selector:
+        text:
+    chore_id:
+      name: Chore ID
+      description: Undo the most recent completion of this chore.
+      required: false
+      selector:
+        text:
+
 get_history:
   name: Get History
   description: Get the completion history for a chore.

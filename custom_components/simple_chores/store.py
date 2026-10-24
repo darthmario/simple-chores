@@ -603,6 +603,16 @@ class SimpleChoresStore:
         chore = self._data["chores"][chore_id]
         now = dt_util.now()
 
+        # Remember what completing overwrites, so an accidental tap can be
+        # undone exactly (see undo_completion)
+        previous = {
+            "next_due": chore.get("next_due"),
+            "last_completed": chore.get("last_completed"),
+            "last_completed_by": chore.get("last_completed_by"),
+            "step_progress": list(chore.get("step_progress") or []),
+            "is_completed": bool(chore.get("is_completed", False)),
+        }
+
         # Update chore
         chore["last_completed"] = now.date().isoformat()
         chore["last_completed_by"] = user_id
@@ -626,6 +636,7 @@ class SimpleChoresStore:
             "completed_at": now.isoformat(),
             "completed_by": user_id,
             "completed_by_name": user_name,
+            "previous": previous,
         }
         self._data["history"].append(history_entry)
         _LOGGER.info(
@@ -658,6 +669,61 @@ class SimpleChoresStore:
             entries_to_remove,
             len(self._data["history"]),
         )
+
+    def undo_completion(
+        self,
+        history_id: str | None = None,
+        chore_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Reverse a completion: drop its history entry and put the chore back.
+
+        Pick the entry by ``history_id``, or the newest completion of
+        ``chore_id``. The chore's due date, last-completed fields, checklist
+        progress and one-off flag are restored from the snapshot the entry
+        carries, so statistics, streaks and anything derived from history (a
+        certain otter's meals) stay honest. Entries written before snapshots
+        existed are still removed; the chore is then left as it is.
+
+        Returns the chore, or the removed entry if its chore no longer exists,
+        or None if nothing matched.
+        """
+        if history_id is None and chore_id is None:
+            raise ValueError("undo_completion needs a history_id or a chore_id")
+
+        history = self._data["history"]
+        index = None
+        for i in range(len(history) - 1, -1, -1):
+            entry = history[i]
+            if history_id is not None:
+                if entry.get("id") == history_id:
+                    index = i
+                    break
+            elif entry.get("chore_id") == chore_id:
+                index = i
+                break
+        if index is None:
+            return None
+
+        entry = history.pop(index)
+        chore = self._data["chores"].get(entry.get("chore_id"))
+        if chore is None:
+            _LOGGER.info("Removed completion %s of a chore that no longer exists", entry.get("id"))
+            return entry
+
+        previous = entry.get("previous")
+        if isinstance(previous, dict):
+            chore["next_due"] = previous.get("next_due")
+            chore["last_completed"] = previous.get("last_completed")
+            chore["last_completed_by"] = previous.get("last_completed_by")
+            chore["step_progress"] = list(previous.get("step_progress") or [])
+            chore["is_completed"] = bool(previous.get("is_completed", False))
+            _LOGGER.info("Undid completion of '%s'; due %s again", chore["name"], chore["next_due"])
+        else:
+            _LOGGER.info(
+                "Removed completion of '%s' from history; it predates undo snapshots so the chore is unchanged",
+                chore["name"],
+            )
+        return chore
 
     def skip_chore(self, chore_id: str, next_due: date) -> dict[str, Any] | None:
         """Skip a chore to the next occurrence without marking complete."""
@@ -735,8 +801,9 @@ class SimpleChoresStore:
             # silently dropping it
             if completed_at is not None and completed_at.tzinfo is not None and completed_at < cutoff:
                 continue
-            # "id" is never read by any consumer, so it is pure payload
-            trimmed.append({k: v for k, v in entry.items() if k != "id"})
+            # The undo snapshot is only ever read server-side; "id" stays so
+            # the history modal can undo a specific entry
+            trimmed.append({k: v for k, v in entry.items() if k != "previous"})
 
         if len(trimmed) < len(history):
             _LOGGER.debug(

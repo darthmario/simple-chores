@@ -50,7 +50,10 @@ const sandbox = {
     readyState: 'complete',
     addEventListener() {}, removeEventListener() {}, dispatchEvent() {},
     // The effective _showToast builds a real DOM node and appends it to body
-    createElement: () => ({ style: {}, remove() {}, textContent: '' }),
+    createElement: () => ({
+      style: {}, remove() {}, textContent: '', className: '', parentNode: null,
+      appendChild() {}, addEventListener() {},
+    }),
     body: { appendChild() {}, removeChild() {} },
   },
 };
@@ -1132,6 +1135,79 @@ await check('the Active Chores tile says it opens the full list', () => {
   const card = makeCard();
   const text = renderToText(card._renderStats());
   assert.ok(text.includes('View all'), 'tile carries a view-all hint');
+});
+
+// --- Undo ------------------------------------------------------------------
+
+await check('completing from the list offers Undo on the toast', async () => {
+  const card = makeCard();
+  const calls = [];
+  card.hass.callService = async (domain, service, data) => { calls.push([service, data]); };
+  const toasts = [];
+  card._showToast = (message, options) => toasts.push([message, options]);
+  card._openCompleteChoreModal(card._choresData.byId.get('a'));
+  card._formData.completion.completedBy = 'u1';
+  await card._submitCompleteChore();
+  const undoToast = toasts.find(([, o]) => o && o.action);
+  assert.ok(undoToast, 'a toast with an action was shown');
+  assert.equal(undoToast[1].action.text, 'Undo');
+  await undoToast[1].action.onAction();
+  assert.deepEqual(calls.map(c => c[0]), ['complete_chore', 'undo_completion']);
+  assert.equal(calls[1][1].chore_id, 'a', 'undo targets the newest completion of that chore');
+});
+
+await check('completing from the focus view offers Undo too, and undo restores the card', async () => {
+  const card = makeCard();
+  const calls = [];
+  card.hass.callService = async (domain, service, data) => { calls.push([service, data]); };
+  const toasts = [];
+  card._showToast = (message, options) => toasts.push([message, options]);
+  const target = card._choresData.byId.get('b');
+  await card._focusComplete(target);
+  assert.ok(card._focusDismissed.b, 'card left the focus queue');
+  const undoToast = toasts.find(([, o]) => o && o.action);
+  assert.ok(undoToast);
+  await undoToast[1].action.onAction();
+  assert.ok(!card._focusDismissed.b, 'undo brings the card back');
+  assert.equal(card._celebration, null, 'and stops the confetti');
+  assert.equal(calls[1][0], 'undo_completion');
+});
+
+await check('a failed completion offers no Undo', async () => {
+  const card = makeCard();
+  card.hass.callService = async () => { throw new Error('boom'); };
+  const toasts = [];
+  card._showToast = (message, options) => toasts.push([message, options]);
+  await card._focusComplete(card._choresData.byId.get('b'));
+  assert.ok(!toasts.some(([, o]) => o && o.action), 'no undo for something that never saved');
+});
+
+await check('the history modal offers Undo only on recent entries with an id', () => {
+  const card = makeCard();
+  const now = Date.now();
+  const recent = { id: 'h1', chore_id: 'a', chore_name: 'Wipe stove', completed_at: new Date(now - 60 * 60 * 1000).toISOString(), completed_by: 'u1', completed_by_name: 'Nate' };
+  const old = { ...recent, id: 'h2', completed_at: new Date(now - 3 * 24 * 60 * 60 * 1000).toISOString() };
+  const noId = { ...recent, id: undefined };
+  assert.equal(card._canUndoEntry(recent, now), true);
+  assert.equal(card._canUndoEntry(old, now), false);
+  assert.equal(card._canUndoEntry(noId, now), false);
+  card._showHistoryModal = true;
+  card._historyData = [recent, old];
+  const text = renderToText(card._renderHistoryModal());
+  assert.equal((text.match(/history-undo-btn/g) || []).length, 1, 'exactly one entry gets an Undo button');
+});
+
+await check('undoing from history calls the service by history id and re-fetches', async () => {
+  const card = makeCard();
+  const calls = [];
+  card.hass.callService = async (domain, service, data) => { calls.push([service, data]); };
+  let fetched = 0;
+  card._fetchHistory = async () => { fetched++; };
+  card._showToast = () => {};
+  await card._undoHistoryEntry({ id: 'h1', chore_name: 'Wipe stove' });
+  assert.equal(calls[0][0], 'undo_completion');
+  assert.equal(calls[0][1].history_id, 'h1');
+  assert.equal(fetched, 1);
 });
 
 // --- Report ---------------------------------------------------------------
