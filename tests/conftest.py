@@ -4,6 +4,8 @@ from __future__ import annotations
 import sys
 import types
 from datetime import UTC, date, datetime
+from enum import Enum
+from types import SimpleNamespace
 
 import pytest
 
@@ -100,9 +102,94 @@ class StubHomeAssistant:
     """Stand-in for homeassistant.core.HomeAssistant."""
 
 
+class StubServiceCall:
+    """Stand-in for homeassistant.core.ServiceCall."""
+
+    def __init__(self, data=None, context=None):
+        self.data = data or {}
+        self.context = context or SimpleNamespace(user_id=None)
+
+
+class StubEvent:
+    """Stand-in for homeassistant.core.Event."""
+
+    def __init__(self, event_type, data=None, context=None):
+        self.event_type = event_type
+        self.data = data or {}
+        self.context = context
+
+
+class StubSupportsResponse(Enum):
+    """Stand-in for homeassistant.core.SupportsResponse."""
+
+    NONE = "none"
+    OPTIONAL = "optional"
+    ONLY = "only"
+
+
+class StubPlatform(str, Enum):
+    """Stand-in for homeassistant.const.Platform."""
+
+    SENSOR = "sensor"
+    BINARY_SENSOR = "binary_sensor"
+    CALENDAR = "calendar"
+
+
+class StubHomeAssistantError(Exception):
+    """Stand-in for homeassistant.exceptions.HomeAssistantError."""
+
+
+class StubServiceNotFound(StubHomeAssistantError):
+    """Stand-in for homeassistant.exceptions.ServiceNotFound."""
+
+
+def _callback(func):
+    """Stand-in for homeassistant.core.callback (marks a function loop-safe)."""
+    return func
+
+
 def _area_registry_async_get(hass):
     """Return the area registry attached to the stub hass."""
     return hass.area_registry
+
+
+def _async_track_time_change(hass, action, hour=None, minute=None, second=None):
+    """Stand-in for homeassistant.helpers.event.async_track_time_change.
+
+    Records the subscription on ``hass.time_change_listeners`` when the fake
+    hass has that list, and returns the unsubscribe callable like HA does.
+    """
+    entry = SimpleNamespace(action=action, hour=hour, minute=minute, second=second)
+    listeners = getattr(hass, "time_change_listeners", None)
+    if listeners is not None:
+        listeners.append(entry)
+
+    def _unsub():
+        if listeners is not None and entry in listeners:
+            listeners.remove(entry)
+
+    return _unsub
+
+
+def _websocket_command(schema):
+    """Stand-in for websocket_api.websocket_command (decorator, no-op here)."""
+
+    def _decorator(func):
+        func.websocket_schema = schema
+        return func
+
+    return _decorator
+
+
+def _has_at_least_one_key(*keys):
+    """Stand-in for config_validation.has_at_least_one_key."""
+
+    def _validate(obj):
+        if not any(k in obj for k in keys):
+            raise ValueError(f"must contain at least one of {keys}")
+        return obj
+
+    return _validate
 
 
 def _make_module(name: str, is_pkg: bool = False) -> types.ModuleType:
@@ -118,7 +205,21 @@ def _make_module(name: str, is_pkg: bool = False) -> types.ModuleType:
 _ha = _make_module("homeassistant", is_pkg=True)
 _ha_core = _make_module("homeassistant.core")
 _ha_core.HomeAssistant = getattr(_ha_core, "HomeAssistant", StubHomeAssistant)
+_ha_core.ServiceCall = getattr(_ha_core, "ServiceCall", StubServiceCall)
+_ha_core.Event = getattr(_ha_core, "Event", StubEvent)
+_ha_core.SupportsResponse = getattr(_ha_core, "SupportsResponse", StubSupportsResponse)
+if not hasattr(_ha_core, "callback"):
+    _ha_core.callback = _callback
 _ha.core = _ha_core
+
+_ha_const = _make_module("homeassistant.const")
+_ha_const.Platform = getattr(_ha_const, "Platform", StubPlatform)
+_ha.const = _ha_const
+
+_ha_exceptions = _make_module("homeassistant.exceptions")
+_ha_exceptions.HomeAssistantError = getattr(_ha_exceptions, "HomeAssistantError", StubHomeAssistantError)
+_ha_exceptions.ServiceNotFound = getattr(_ha_exceptions, "ServiceNotFound", StubServiceNotFound)
+_ha.exceptions = _ha_exceptions
 
 _ha_config_entries = _make_module("homeassistant.config_entries")
 _ha_config_entries.ConfigEntry = getattr(_ha_config_entries, "ConfigEntry", StubConfigEntry)
@@ -140,7 +241,38 @@ _ha_helpers.update_coordinator = _ha_update_coordinator
 _ha_area_registry = _make_module("homeassistant.helpers.area_registry")
 if not hasattr(_ha_area_registry, "async_get"):
     _ha_area_registry.async_get = _area_registry_async_get
+if not hasattr(_ha_area_registry, "EVENT_AREA_REGISTRY_UPDATED"):
+    _ha_area_registry.EVENT_AREA_REGISTRY_UPDATED = "area_registry_updated"
 _ha_helpers.area_registry = _ha_area_registry
+
+_ha_event = _make_module("homeassistant.helpers.event")
+if not hasattr(_ha_event, "async_track_time_change"):
+    _ha_event.async_track_time_change = _async_track_time_change
+_ha_helpers.event = _ha_event
+
+# Just enough of config_validation for the service schemas in __init__.py
+_ha_cv = _make_module("homeassistant.helpers.config_validation")
+for _name, _validator in (
+    ("string", str),
+    ("boolean", bool),
+    ("date", lambda value: value if isinstance(value, date) else date.fromisoformat(value)),
+    ("ensure_list", lambda value: value if isinstance(value, list) else [value]),
+    ("has_at_least_one_key", _has_at_least_one_key),
+):
+    if not hasattr(_ha_cv, _name):
+        setattr(_ha_cv, _name, _validator)
+_ha_helpers.config_validation = _ha_cv
+
+_ha_components = _make_module("homeassistant.components", is_pkg=True)
+_ha.components = _ha_components
+_ha_websocket_api = _make_module("homeassistant.components.websocket_api")
+if not hasattr(_ha_websocket_api, "websocket_command"):
+    _ha_websocket_api.websocket_command = _websocket_command
+if not hasattr(_ha_websocket_api, "async_register_command"):
+    _ha_websocket_api.async_register_command = lambda *_args: None
+if not hasattr(_ha_websocket_api, "ActiveConnection"):
+    _ha_websocket_api.ActiveConnection = type("ActiveConnection", (), {})
+_ha_components.websocket_api = _ha_websocket_api
 
 _ha_util = _make_module("homeassistant.util", is_pkg=True)
 _ha.util = _ha_util

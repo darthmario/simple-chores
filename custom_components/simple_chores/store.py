@@ -220,7 +220,7 @@ class SimpleChoresStore:
         # Log and delete associated chores
         for chore_id in chores_to_remove:
             chore_name = self._data["chores"][chore_id].get("name", "Unknown")
-            _LOGGER.info(
+            _LOGGER.debug(
                 "Removing chore '%s' (ID: %s) due to room deletion",
                 chore_name,
                 chore_id,
@@ -257,7 +257,7 @@ class SimpleChoresStore:
             "is_custom": True,
         }
         self._data["users"][user_id] = user
-        _LOGGER.info("Created custom user '%s' with ID: %s", name, user_id)
+        _LOGGER.debug("Created custom user '%s' with ID: %s", name, user_id)
         return user
 
     def update_user(self, user_id: str, name: str | None = None, avatar: str | None = None) -> dict[str, Any] | None:
@@ -289,7 +289,7 @@ class SimpleChoresStore:
         user_name = self._data["users"][user_id].get("name", user_id)
         del self._data["users"][user_id]
 
-        _LOGGER.info("Removed custom user '%s' (ID: %s)", user_name, user_id)
+        _LOGGER.debug("Removed custom user '%s' (ID: %s)", user_name, user_id)
         return True
 
     # Chore operations
@@ -380,7 +380,7 @@ class SimpleChoresStore:
         }
 
         # Debug logging for assignment
-        _LOGGER.info(
+        _LOGGER.debug(
             "Creating chore '%s' with recurrence_type: %s, assigned_to: %s",
             name,
             recurrence_type,
@@ -622,7 +622,7 @@ class SimpleChoresStore:
         if next_due is None:
             # One-off chore - mark as completed permanently
             chore["is_completed"] = True
-            _LOGGER.info("One-off chore '%s' marked as completed", chore["name"])
+            _LOGGER.debug("One-off chore '%s' marked as completed", chore["name"])
         else:
             # Recurring chore - reschedule
             chore["next_due"] = next_due.isoformat()
@@ -639,7 +639,7 @@ class SimpleChoresStore:
             "previous": previous,
         }
         self._data["history"].append(history_entry)
-        _LOGGER.info(
+        _LOGGER.debug(
             "Added history entry for chore '%s' completed by %s. Total history entries: %d",
             chore["name"],
             user_name,
@@ -714,7 +714,7 @@ class SimpleChoresStore:
         entry_chore_id = entry.get("chore_id")
         chore = self._data["chores"].get(entry_chore_id)
         if chore is None:
-            _LOGGER.info("Removed completion %s of a chore that no longer exists", entry.get("id"))
+            _LOGGER.debug("Removed completion %s of a chore that no longer exists", entry.get("id"))
             return entry
 
         completed_at = self._entry_time(entry)
@@ -725,7 +725,7 @@ class SimpleChoresStore:
             if (t := self._entry_time(h)) is not None and completed_at is not None and t > completed_at
         ]
         if later:
-            _LOGGER.info(
+            _LOGGER.debug(
                 "Removed an older completion of '%s' from history; a later one keeps the chore where it is",
                 chore["name"],
             )
@@ -738,7 +738,7 @@ class SimpleChoresStore:
             chore["last_completed_by"] = previous.get("last_completed_by")
             chore["step_progress"] = list(previous.get("step_progress") or [])
             chore["is_completed"] = bool(previous.get("is_completed", False))
-            _LOGGER.info("Undid completion of '%s'; due %s again", chore["name"], chore["next_due"])
+            _LOGGER.debug("Undid completion of '%s'; due %s again", chore["name"], chore["next_due"])
             return chore
 
         # No snapshot (the entry predates them): the best reconstruction is
@@ -751,7 +751,7 @@ class SimpleChoresStore:
         chore["last_completed"] = dt_util.as_local(prior_time).date().isoformat() if prior_time else None
         chore["last_completed_by"] = prior.get("completed_by") if prior else None
         chore["is_completed"] = False
-        _LOGGER.info(
+        _LOGGER.debug(
             "Undid a pre-snapshot completion of '%s'; due %s again (approximate)",
             chore["name"],
             chore["next_due"],
@@ -821,7 +821,7 @@ class SimpleChoresStore:
         current_due = date.fromisoformat(chore["next_due"])
         new_due = current_due + timedelta(days=1)
         chore["next_due"] = new_due.isoformat()
-        _LOGGER.info("Snoozed chore '%s' from %s to %s", chore["name"], current_due, new_due)
+        _LOGGER.debug("Snoozed chore '%s' from %s to %s", chore["name"], current_due, new_due)
         return chore
 
     def get_recent_history(

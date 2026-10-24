@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.helpers.area_registry import EVENT_AREA_REGISTRY_UPDATED
+from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
@@ -23,7 +25,7 @@ from .statistics import build_statistics
 from .store import SimpleChoresStore
 
 if TYPE_CHECKING:
-    from homeassistant.core import HomeAssistant
+    from homeassistant.core import Event, HomeAssistant
     from homeassistant.helpers.area_registry import AreaRegistry
 
 _LOGGER = logging.getLogger(__name__)
@@ -62,6 +64,36 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.store = store
         self.config_entry = config_entry
         self._room_name_cache: dict[str, str] | None = None
+
+    def async_setup_listeners(self) -> None:
+        """Subscribe to the events that change our data without a user action.
+
+        Both subscriptions are tied to the config entry, so they are removed
+        when the entry unloads.
+        """
+        # Area names come from HA's area registry and are cached (see
+        # _get_room_name). Renaming an area in HA used to leave the old name
+        # on every chore until the next room mutation rebuilt the cache.
+        self.config_entry.async_on_unload(
+            self.hass.bus.async_listen(EVENT_AREA_REGISTRY_UPDATED, self._async_on_area_registry_updated)
+        )
+        # Due windows only move at local midnight, but the periodic poll
+        # (every 15 minutes, kept as a safety net) could leave yesterday's
+        # "due today" list on the wall display for up to a quarter of an hour.
+        self.config_entry.async_on_unload(
+            async_track_time_change(self.hass, self._async_on_midnight, hour=0, minute=0, second=0)
+        )
+
+    async def _async_on_area_registry_updated(self, event: Event) -> None:
+        """Pick up area renames, additions and removals straight away."""
+        _LOGGER.debug("Area registry changed (%s); refreshing room names", event.data)
+        self._invalidate_room_cache()
+        await self._async_refresh_now()
+
+    async def _async_on_midnight(self, now: datetime) -> None:
+        """Roll the due windows over as soon as the local date changes."""
+        _LOGGER.debug("Local midnight; recalculating due windows")
+        await self._async_refresh_now()
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Calculate due chores and prepare data for entities."""
@@ -396,7 +428,7 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 f"Please create the room first or use an existing HA Area."
             )
 
-        _LOGGER.info(
+        _LOGGER.debug(
             "Coordinator: Adding chore '%s' with recurrence_type: %s, assigned_to: %s",
             name,
             recurrence_type,
@@ -418,7 +450,7 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             estimated_minutes,
             steps,
         )
-        _LOGGER.info("Coordinator: Created chore data: %s", chore)
+        _LOGGER.debug("Coordinator: Created chore data: %s", chore)
         await self.store.async_save_debounced()  # Use debounced save for performance
         await self._async_refresh_now()
         return chore

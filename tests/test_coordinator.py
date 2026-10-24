@@ -7,10 +7,11 @@ auth manager with HA users.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 
 import pytest
+from homeassistant.util import dt as dt_util
 
 from custom_components.simple_chores.coordinator import SimpleChoresCoordinator
 from custom_components.simple_chores.store import SimpleChoresStore
@@ -38,8 +39,33 @@ class FakeAuth:
         return self.users
 
 
+class FakeBus:
+    def __init__(self):
+        self.listeners: list[tuple[str, object]] = []
+
+    def async_listen(self, event_type, listener):
+        entry = (event_type, listener)
+        self.listeners.append(entry)
+
+        def _unsub():
+            self.listeners.remove(entry)
+
+        return _unsub
+
+
+class FakeConfigEntry(SimpleNamespace):
+    def __init__(self, **kwargs):
+        super().__init__(data={}, options={}, entry_id="test-entry", on_unload=[], **kwargs)
+
+    def async_on_unload(self, func):
+        self.on_unload.append(func)
+
+
 class FakeHass:
     def __init__(self):
+        self.bus = FakeBus()
+        # Filled by the async_track_time_change stub in conftest
+        self.time_change_listeners: list = []
         self.area_registry = FakeAreaRegistry(
             [
                 FakeArea(id="kitchen", name="Kitchen", icon="mdi:stove"),
@@ -67,7 +93,7 @@ def store(hass):
 
 @pytest.fixture
 def coordinator(hass, store):
-    return SimpleChoresCoordinator(hass, store, config_entry=SimpleNamespace(data={}, options={}))
+    return SimpleChoresCoordinator(hass, store, config_entry=FakeConfigEntry())
 
 
 class TestUpdateData:
@@ -491,3 +517,98 @@ class TestRefreshIsNotDebounced:
         before = (await coordinator._async_update_data())["revision"]
         await coordinator.async_update_chore(chore["id"], estimated_minutes=5)
         assert coordinator.data["revision"] != before
+
+
+class TestAreaRegistryListener:
+    """Area names are cached (see _get_room_name), and the cache used to be
+    rebuilt only by custom-room mutations, so renaming an area in HA left the
+    old name on every chore until someone edited a room."""
+
+    def _area_listener(self, hass):
+        listeners = [fn for event_type, fn in hass.bus.listeners if event_type == "area_registry_updated"]
+        assert len(listeners) == 1, hass.bus.listeners
+        return listeners[0]
+
+    async def test_subscribes_to_area_registry_updates(self, coordinator, hass):
+        coordinator.async_setup_listeners()
+        listener = self._area_listener(hass)
+        assert listener == coordinator._async_on_area_registry_updated
+
+    async def test_rename_shows_up_after_the_event(self, coordinator, hass, store):
+        coordinator.async_setup_listeners()
+        store.add_chore("Dishes", "area_kitchen", "daily", start_date=TODAY)
+        await coordinator.async_refresh()
+        assert coordinator.data["chores"][0]["room_name"] == "Kitchen"
+
+        hass.area_registry.areas[0].name = "Chef Kitchen"
+        # The cache alone would keep serving the old name on a routine poll
+        await coordinator.async_refresh()
+        assert coordinator.data["chores"][0]["room_name"] == "Kitchen"
+
+        coordinator.refresh_calls = 0
+        event = SimpleNamespace(event_type="area_registry_updated", data={"action": "update", "area_id": "kitchen"})
+        await self._area_listener(hass)(event)
+
+        assert coordinator.refresh_calls == 1, "the rename must refresh immediately"
+        assert coordinator.data["chores"][0]["room_name"] == "Chef Kitchen"
+        assert {r["name"] for r in coordinator.data["rooms"]} >= {"Chef Kitchen", "Living Room"}
+
+    async def test_new_area_is_named_after_the_event(self, coordinator, hass, store):
+        # A chore moved into an area created after the cache was built used to
+        # read "Unknown Room"
+        coordinator.async_setup_listeners()
+        await coordinator.async_refresh()
+        hass.area_registry.areas.append(FakeArea(id="garage", name="Garage", icon=None))
+        await self._area_listener(hass)(SimpleNamespace(data={"action": "create", "area_id": "garage"}))
+
+        chore = await coordinator.async_add_chore("Sweep", "area_garage", "weekly")
+        assert next(c for c in coordinator.data["chores"] if c["id"] == chore["id"])["room_name"] == "Garage"
+
+    async def test_unsubscribes_on_unload(self, coordinator, hass):
+        coordinator.async_setup_listeners()
+        assert len(hass.bus.listeners) == 1
+        for unsub in coordinator.config_entry.on_unload:
+            unsub()
+        assert hass.bus.listeners == []
+
+
+class TestMidnightRollover:
+    """Due windows only move at local midnight, but the coordinator polls every
+    15 minutes, so the wall display could show yesterday's list for up to a
+    quarter of an hour after the date changed."""
+
+    def _midnight_listener(self, hass):
+        assert len(hass.time_change_listeners) == 1, hass.time_change_listeners
+        return hass.time_change_listeners[0]
+
+    async def test_tracks_local_midnight(self, coordinator, hass):
+        coordinator.async_setup_listeners()
+        listener = self._midnight_listener(hass)
+        assert (listener.hour, listener.minute, listener.second) == (0, 0, 0)
+        assert listener.action == coordinator._async_on_midnight
+
+    async def test_keeps_the_periodic_poll_as_a_safety_net(self, coordinator):
+        assert coordinator.update_interval is not None
+
+    async def test_midnight_refresh_moves_the_due_windows(self, coordinator, hass, store, monkeypatch):
+        coordinator.async_setup_listeners()
+        tomorrow = store.add_chore("Tomorrow", "area_kitchen", "daily", start_date=date(2024, 6, 16))
+        await coordinator.async_refresh()
+        assert coordinator.data["today"] == "2024-06-15"
+        assert tomorrow["id"] not in {c["id"] for c in coordinator.data["due_today"]}
+
+        midnight = datetime(2024, 6, 16, 0, 0, 0, tzinfo=UTC)
+        monkeypatch.setattr(dt_util, "now", lambda: midnight)
+        coordinator.refresh_calls = 0
+        await self._midnight_listener(hass).action(midnight)
+
+        assert coordinator.refresh_calls == 1, "midnight must refresh immediately, not wait for the poll"
+        assert coordinator.data["today"] == "2024-06-16"
+        assert tomorrow["id"] in {c["id"] for c in coordinator.data["due_today"]}
+
+    async def test_removed_on_unload(self, coordinator, hass):
+        coordinator.async_setup_listeners()
+        assert len(hass.time_change_listeners) == 1
+        for unsub in coordinator.config_entry.on_unload:
+            unsub()
+        assert hass.time_change_listeners == []

@@ -1,9 +1,20 @@
-"""Tests for notification utility logic.
+"""Tests for notification logic.
 
-The async notification functions require Home Assistant and are tested
-via integration tests. This file tests the pure utility functions.
+The first half checks the pure utility functions against local copies; the
+async sending logic runs against the real notifications.py with the Home
+Assistant stubs from conftest.py (fixed "now" of 2024-06-15 UTC).
 """
 from __future__ import annotations
+
+import inspect
+from datetime import UTC, datetime, timedelta, timezone
+from types import SimpleNamespace
+
+import pytest
+from homeassistant.util import dt as dt_util
+
+from custom_components.simple_chores import notifications
+from custom_components.simple_chores.const import CONF_NOTIFY_DAYS_BEFORE
 
 
 def _get_due_date_label(days_ahead: int) -> str:
@@ -126,3 +137,87 @@ class TestNotificationMessageFormat:
 
         matched = [s for s in services if normalized in s.replace("mobile_app_", "").lower()]
         assert matched == []
+
+
+class FakeServices:
+    def __init__(self, notify_targets):
+        self._notify = dict.fromkeys(notify_targets)
+        self.calls: list[tuple[str, str, dict]] = []
+
+    def async_services(self):
+        return {"notify": self._notify}
+
+    async def async_call(self, domain, service, data):
+        self.calls.append((domain, service, data))
+
+
+class FakeCoordinator:
+    def __init__(self, chores):
+        self.data = {"chores": chores}
+        self.immediate_refreshes = 0
+
+    async def _async_refresh_now(self):
+        self.immediate_refreshes += 1
+
+    async def async_request_refresh(self):
+        raise AssertionError("async_request_refresh() is debounced by 10s; use _async_refresh_now()")
+
+    async def async_get_user_name(self, user_id):
+        return {"u-nate": "Nate"}.get(user_id, user_id)
+
+
+@pytest.fixture
+def hass():
+    return SimpleNamespace(services=FakeServices(["mobile_app_nates_phone", "mobile_app_wall_tablet"]))
+
+
+def _chore(name, next_due, assigned_to=None):
+    return {"id": f"id-{name}", "name": name, "room_name": "Kitchen", "next_due": next_due, "assigned_to": assigned_to}
+
+
+class TestSendDueNotification:
+    """async_send_due_notification used the host clock's date and the debounced
+    refresh; the configured HA timezone and the immediate refresh are what the
+    rest of the integration uses."""
+
+    async def test_refreshes_immediately_before_reading_chores(self, hass):
+        coordinator = FakeCoordinator([_chore("Dishes", "2024-06-15")])
+        await notifications.async_send_due_notification(hass, coordinator)
+        assert coordinator.immediate_refreshes == 1
+
+    def test_no_debounced_refresh_or_host_clock_in_source(self):
+        source = inspect.getsource(notifications)
+        assert "await coordinator.async_request_refresh()" not in source
+        assert "date.today()" not in source, "use dt_util.now().date() so the HA timezone applies"
+
+    async def test_today_comes_from_the_ha_clock(self, hass):
+        # "Tomorrow" relative to the pinned HA now (2024-06-15); under the host
+        # clock's date nothing would match and no notification would go out
+        coordinator = FakeCoordinator([_chore("Dishes", "2024-06-16"), _chore("Later", "2024-06-17")])
+        entry = SimpleNamespace(options={CONF_NOTIFY_DAYS_BEFORE: [1]})
+        await notifications.async_send_due_notification(hass, coordinator, entry)
+
+        targets = sorted(service for _domain, service, _data in hass.services.calls)
+        assert targets == ["mobile_app_nates_phone", "mobile_app_wall_tablet"]
+        _domain, _service, data = hass.services.calls[0]
+        assert data["title"] == "Unassigned Chores Due Tomorrow"
+        assert "Dishes (Kitchen)" in data["message"]
+        assert "Later" not in data["message"]
+
+    async def test_follows_the_configured_timezone_across_midnight(self, hass, monkeypatch):
+        # 23:30 on the 15th in UTC is already the 16th in a UTC+2 house. HA's
+        # dt_util.now() is in the configured zone, so the 16th is "today".
+        local_now = datetime(2024, 6, 16, 1, 30, tzinfo=timezone(timedelta(hours=2)))
+        monkeypatch.setattr(dt_util, "now", lambda: local_now)
+        assert local_now.astimezone(UTC).date().isoformat() == "2024-06-15"
+
+        coordinator = FakeCoordinator([_chore("Dishes", "2024-06-16", assigned_to="u-nate")])
+        await notifications.async_send_due_notification(hass, coordinator)  # default: day-of only
+
+        assert [service for _d, service, _data in hass.services.calls] == ["mobile_app_nates_phone"]
+        assert hass.services.calls[0][2]["title"] == "Nate's Chores Due Today"
+
+    async def test_nothing_sent_when_nothing_is_due(self, hass):
+        coordinator = FakeCoordinator([_chore("Dishes", "2024-06-20")])
+        await notifications.async_send_due_notification(hass, coordinator)
+        assert hass.services.calls == []

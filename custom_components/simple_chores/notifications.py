@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import Event, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers.event import async_track_time_change
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_NOTIFICATION_TIME,
@@ -140,8 +141,10 @@ async def async_send_due_notification(
     entry: ConfigEntry | None = None,
 ) -> None:
     """Send targeted notifications about chores due based on configured days."""
-    # Refresh data first
-    await coordinator.async_request_refresh()
+    # Refresh data first. async_request_refresh() is debounced by 10 s, so the
+    # notification could go out from stale data; the coordinator's immediate
+    # refresh is what every other caller uses.
+    await coordinator._async_refresh_now()
 
     if coordinator.data is None:
         return
@@ -153,7 +156,8 @@ async def async_send_due_notification(
 
     # Get all chores and filter for each notification day
     all_chores = coordinator.data.get("chores", [])
-    today = date.today()
+    # The configured HA timezone decides what "today" is, not the host clock
+    today = dt_util.now().date()
 
     # Get all mobile app notify services
     all_mobile_apps = []
