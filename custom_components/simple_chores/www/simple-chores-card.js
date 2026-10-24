@@ -5,7 +5,7 @@
 
 // Card version - update this when releasing new versions
 // This should match the version in manifest.json
-const CARD_VERSION = "1.9.1";
+const CARD_VERSION = "1.12.0";
 
 // Try the most direct approach used by working HA cards
 let LitElement, html, css;
@@ -23,7 +23,6 @@ const initCard = () => {
     LitElement = window.LitElement;
     html = LitElement.prototype.html;
     css = LitElement.prototype.css;
-    console.info("Simple Chores Card: Using window.LitElement");
     defineCards();
     return;
   }
@@ -37,7 +36,6 @@ const initCard = () => {
     LitElement = Object.getPrototypeOf(existingCard);
     html = LitElement.prototype.html;
     css = LitElement.prototype.css;
-    console.info("Simple Chores Card: Got LitElement from existing card");
     defineCards();
     return;
   }
@@ -53,6 +51,120 @@ const defineCards = () => {
     return;
   }
 
+/** mm:ss for the countdown ring and anything else that shows seconds. */
+const formatClock = (totalSeconds) => {
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  return `${mins}:${String(secs).padStart(2, '0')}`;
+};
+
+/**
+ * The focus view's countdown ring. It is its own element so that the
+ * once-a-second tick re-renders this small SVG and nothing else: the card
+ * sets `remaining` and `finished` on it directly from _tickTimer instead of
+ * re-rendering itself.
+ */
+class SimpleChoresTimerRing extends LitElement {
+  static get properties() {
+    return {
+      total: { type: Number },
+      remaining: { type: Number },
+      finished: { type: Boolean },
+    };
+  }
+
+  constructor() {
+    super();
+    this.total = 0;
+    this.remaining = 0;
+    this.finished = false;
+  }
+
+  render() {
+    const radius = 26;
+    const circumference = 2 * Math.PI * radius;
+    const fraction = this.total > 0 ? this.remaining / this.total : 0;
+    return html`
+      <div class="focus-timer ${this.finished ? 'finished' : ''}">
+        <svg viewBox="0 0 64 64" class="focus-timer-ring" aria-hidden="true">
+          <circle class="ring-track" cx="32" cy="32" r="${radius}"></circle>
+          <circle
+            class="ring-value"
+            cx="32"
+            cy="32"
+            r="${radius}"
+            stroke-dasharray="${circumference}"
+            stroke-dashoffset="${circumference * (1 - fraction)}"
+          ></circle>
+        </svg>
+        <span class="focus-timer-text">
+          ${this.finished ? "Time's up!" : formatClock(this.remaining)}
+        </span>
+      </div>
+    `;
+  }
+
+  static get styles() {
+    // Theme tokens (--sc-*) are custom properties, so they inherit from the
+    // card through the shadow boundary
+    return css`
+      :host {
+        display: block;
+      }
+
+      .focus-timer {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .focus-timer-ring {
+        width: 64px;
+        height: 64px;
+        flex-shrink: 0;
+        transform: rotate(-90deg);
+      }
+
+      .focus-timer-ring .ring-track,
+      .focus-timer-ring .ring-value {
+        fill: none;
+        stroke-width: 6;
+        stroke-linecap: round;
+      }
+
+      .focus-timer-ring .ring-track {
+        stroke: var(--secondary-background-color);
+      }
+
+      .focus-timer-ring .ring-value {
+        stroke: var(--sc-accent);
+        transition: stroke-dashoffset 1s linear;
+      }
+
+      .focus-timer.finished .ring-value {
+        stroke: var(--sc-danger);
+      }
+
+      .focus-timer-text {
+        font-size: 1.6em;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        color: var(--primary-text-color);
+      }
+
+      .focus-timer.finished .focus-timer-text {
+        color: var(--sc-danger);
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .focus-timer-ring .ring-value {
+          transition: none;
+        }
+      }
+    `;
+  }
+}
+
 class SimpleChoresCard extends LitElement {
   static get properties() {
     return {
@@ -60,7 +172,6 @@ class SimpleChoresCard extends LitElement {
       config: { type: Object },
       _selectedRoom: { type: String },
       _selectedAssignee: { type: String },
-      _showMyChoresOnly: { type: Boolean },
       _currentView: { type: String },
       _calendarMonth: { type: Number },
       _calendarYear: { type: Number },
@@ -69,10 +180,7 @@ class SimpleChoresCard extends LitElement {
       _showRoomDropdown: { type: Boolean },
       _showAssigneeDropdown: { type: Boolean },
       _activeChoreMenu: { type: String },
-      // Modal system
-      _activeModal: { type: String },
-      _modalData: { type: Object },
-      // Individual modal states (kept for compatibility)
+      // Modal states
       _showAddRoomModal: { type: Boolean },
       _showManageRoomsModal: { type: Boolean },
       _showAddUserModal: { type: Boolean },
@@ -94,8 +202,6 @@ class SimpleChoresCard extends LitElement {
       _isLoading: { type: Boolean },
       // Calendar view mode: 'grid' or 'agenda'
       _calendarMode: { type: String },
-      // Track card width for responsive behavior
-      _cardWidth: { type: Number },
       // Track if user manually overrode calendar mode
       _userOverrodeCalendarMode: { type: Boolean },
       // Statistics dashboard
@@ -109,7 +215,7 @@ class SimpleChoresCard extends LitElement {
       _focusIndex: { type: Number },
       _focusDismissed: { type: Object },
       _focusGetAhead: { type: Boolean },
-      _focusTimer: { type: Object },
+      // _focusTimer is deliberately NOT reactive - see _tickTimer
       _celebration: { type: Object },
       _expandedSteps: { type: Object },
       _stepOptimistic: { type: Object },
@@ -126,10 +232,6 @@ class SimpleChoresCard extends LitElement {
       RETRY_DELAY: 500,
       // How long to keep an optimistic chore update before trusting sensor data
       OPTIMISTIC_UPDATE_DELAY: 1000,
-
-      // Cache TTLs (milliseconds)
-      ROOM_CACHE_TTL: 30000,  // 30 seconds
-      USER_CACHE_TTL: 60000,  // 1 minute
 
       // Display limits
       DEFAULT_CHORE_LIMIT: 20,
@@ -175,7 +277,6 @@ class SimpleChoresCard extends LitElement {
     super();
     this._selectedRoom = "all";
     this._selectedAssignee = "all";
-    this._showMyChoresOnly = false;
     this._currentView = "list";
     const now = new Date();
     this._calendarMonth = now.getMonth();
@@ -185,10 +286,7 @@ class SimpleChoresCard extends LitElement {
     this._showRoomDropdown = false;
     this._showAssigneeDropdown = false;
     this._activeChoreMenu = null;
-    // Modal system
-    this._activeModal = null;
-    this._modalData = {};
-    // Individual modal states
+    // Modal states
     this._showAddRoomModal = false;
     this._showManageRoomsModal = false;
     this._showAddUserModal = false;
@@ -217,7 +315,6 @@ class SimpleChoresCard extends LitElement {
     this._isLoading = false;
     // Calendar mode: 'grid' or 'agenda' (auto-detected based on width)
     this._calendarMode = 'grid';
-    this._cardWidth = 0;
     this._resizeObserver = null;
     this._userOverrodeCalendarMode = false;
     // Statistics dashboard
@@ -231,6 +328,10 @@ class SimpleChoresCard extends LitElement {
     this._focusIndex = 0;
     this._focusDismissed = {};        // chore ids acted on but not yet gone from sensors
     this._focusGetAhead = false;      // pulling from the next 7 days once today is clear
+    // The countdown is not a reactive property: it ticks once a second, and
+    // re-rendering the whole card for a ring is what made the focus view
+    // expensive on the wall display. Ticks go straight to the ring element;
+    // only starting and stopping re-render the card (see _tickTimer).
     this._focusTimer = null;
     this._timerInterval = null;
     this._celebration = null;
@@ -244,12 +345,17 @@ class SimpleChoresCard extends LitElement {
     // Chores arrive over the websocket too - see _fetchChores
     this._choresData = this.constructor.emptyChoresData();
     this._choresFetchInFlight = false;
-    // Performance caching
+    // Rooms and users are cached against the sensor attribute they were read
+    // from, so they refresh the moment the backend publishes a change and
+    // never go stale in between. A time-based cache did both of those wrong:
+    // a freshly added room could hide for 30 seconds behind a stale copy.
     this._cache = {
-      rooms: { data: null, lastUpdate: 0, ttl: this.constructor.constants.ROOM_CACHE_TTL },
-      users: { data: null, lastUpdate: 0, ttl: this.constructor.constants.USER_CACHE_TTL },
-      roomLookup: new Map() // Persistent room lookup cache
+      rooms: { source: undefined, areas: undefined, data: null },
+      users: { source: undefined, states: null, data: null },
+      roomLookup: new Map() // room id -> name, cleared whenever rooms refresh
     };
+    // Derived data memoised on the inputs it was built from (see _memo)
+    this._memos = new Map();
     // Common household icons
     this._commonIcons = [
       { icon: 'mdi:home', label: 'Home' },
@@ -359,7 +465,6 @@ class SimpleChoresCard extends LitElement {
       S.DUE_NEXT_7_DAYS,
       S.OVERDUE,
       S.TOTAL,
-      "calendar.household_tasks",
     ];
 
     for (const entityId of watchedEntities) {
@@ -390,7 +495,6 @@ class SimpleChoresCard extends LitElement {
     this._resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const width = entry.contentRect.width;
-        this._cardWidth = width;
         // Auto-switch calendar mode based on width
         // Under 500px, use agenda view for better readability
         const newMode = width < this.constructor.constants.AGENDA_VIEW_WIDTH_THRESHOLD ? 'agenda' : 'grid';
@@ -617,28 +721,40 @@ class SimpleChoresCard extends LitElement {
   }
 
   // Cache management utilities
-  _isCacheValid(cacheKey) {
-    const cache = this._cache[cacheKey];
-    return cache.data !== null && (Date.now() - cache.lastUpdate) < cache.ttl;
-  }
-
-  _updateCache(cacheKey, data) {
-    this._cache[cacheKey] = {
-      ...this._cache[cacheKey],
-      data: data,
-      lastUpdate: Date.now()
-    };
-  }
-
   _invalidateCache(cacheKey) {
-    if (this._cache[cacheKey]) {
-      this._cache[cacheKey].data = null;
-      this._cache[cacheKey].lastUpdate = 0;
+    const cache = this._cache[cacheKey];
+    if (cache) {
+      cache.data = null;
+      cache.source = undefined;
     }
     // Also clear room lookup cache when rooms change
     if (cacheKey === 'rooms') {
       this._cache.roomLookup.clear();
     }
+  }
+
+  /**
+   * Return the value computed last time for `name` while every entry of
+   * `deps` is the same (by identity) as it was then; otherwise recompute.
+   *
+   * Render paths call their derived-data builders on every pass, and Home
+   * Assistant renders often. The expensive ones - projecting the calendar,
+   * filtering and sorting the focus queue - only need to run when one of
+   * their inputs actually changed. All of those inputs are reassigned
+   * rather than mutated, so identity is a safe key.
+   * @param {string} name
+   * @param {Array} deps
+   * @param {Function} compute
+   */
+  _memo(name, deps, compute) {
+    const previous = this._memos.get(name);
+    if (previous && previous.deps.length === deps.length &&
+        previous.deps.every((dep, index) => dep === deps[index])) {
+      return previous.value;
+    }
+    const value = compute();
+    this._memos.set(name, { deps, value });
+    return value;
   }
 
   // Consolidated room lookup logic
@@ -711,8 +827,8 @@ class SimpleChoresCard extends LitElement {
       this._focusMode = this.config.focus_layout;
       this._userOverrodeFocusMode = true;
     }
-    if (!this._showMyChoresOnly && this.config.my_chores_default) {
-      this._showMyChoresOnly = true;
+    if (this._selectedAssignee === "all" && this.config.my_chores_default) {
+      this._selectedAssignee = "mine";
     }
     if (this._selectedRoom === "all" && this.config.default_room !== "all") {
       this._selectedRoom = this.config.default_room;
@@ -742,14 +858,7 @@ class SimpleChoresCard extends LitElement {
 
     // Count chores per room for the dropdown
     const allChoresForCounts = this._getAllChores();
-    const roomChoreCounts = {};
-    for (const chore of allChoresForCounts) {
-      const rid = chore.room_id || chore.room;
-      if (rid) {
-        roomChoreCounts[rid] = (roomChoreCounts[rid] || 0) + 1;
-      }
-    }
-    const roomsWithChores = rooms.filter(r => roomChoreCounts[r.id] > 0);
+    const { roomChoreCounts, roomsWithChores } = this._getRoomChoreCounts(allChoresForCounts, rooms);
 
     // Get selected room name for dropdown button
     const selectedRoomName = this._selectedRoom === 'all'
@@ -930,6 +1039,25 @@ class SimpleChoresCard extends LitElement {
     `;
   }
 
+  /**
+   * Chores per room, and the rooms that have any, for the room dropdown.
+   * Memoised: the chore list and room list only change identity when the
+   * backend publishes something new.
+   */
+  _getRoomChoreCounts(chores, rooms) {
+    return this._memo('roomCounts', [chores, rooms], () => {
+      const roomChoreCounts = {};
+      for (const chore of chores) {
+        const rid = chore.room_id || chore.room;
+        if (rid) {
+          roomChoreCounts[rid] = (roomChoreCounts[rid] || 0) + 1;
+        }
+      }
+      const roomsWithChores = rooms.filter(r => roomChoreCounts[r.id] > 0);
+      return { roomChoreCounts, roomsWithChores };
+    });
+  }
+
   _renderLoading() {
     return html`
       <div class="chores-loading">
@@ -988,8 +1116,6 @@ class SimpleChoresCard extends LitElement {
 
   _selectAssignee(assigneeId) {
     this._selectedAssignee = assigneeId;
-    // Update legacy flag for compatibility
-    this._showMyChoresOnly = assigneeId === 'mine';
     this._showAssigneeDropdown = false;
   }
 
@@ -1755,7 +1881,28 @@ class SimpleChoresCard extends LitElement {
     return occurrences;
   }
 
-  _renderCalendarView() {
+  /**
+   * Everything the grid and agenda need for the visible month, memoised on
+   * its inputs: the chore list, the header filters, optimistic drag moves,
+   * the fetched history and the month itself. Building it projects every
+   * chore's recurrence and groups history by day, which is far too much to
+   * redo on each of Home Assistant's frequent hass updates.
+   */
+  _getCalendarData() {
+    const deps = [
+      this._choresData.chores,
+      this._optimisticChoreUpdates,
+      this._historyData,
+      this._selectedRoom,
+      this._selectedAssignee,
+      this.hass?.user?.id ?? null,
+      this._calendarMonth,
+      this._calendarYear,
+    ];
+    return this._memo('calendar', deps, () => this._buildCalendarData());
+  }
+
+  _buildCalendarData() {
     const allChores = this._getAllChores();
     const roomFiltered = this._filterChoresByRoom(allChores);
     const filteredChores = this._filterChoresByUser(roomFiltered);
@@ -1768,19 +1915,12 @@ class SimpleChoresCard extends LitElement {
       return chore;
     });
 
-    // Get completion history for showing completed chores
-    const completionHistory = this._getCompletionHistorySync();
-
-    // Calendar navigation
-    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
-      'July', 'August', 'September', 'October', 'November', 'December'];
-    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
     // Get first and last day of month
     const firstDay = new Date(this._calendarYear, this._calendarMonth, 1);
     const lastDay = new Date(this._calendarYear, this._calendarMonth + 1, 0);
     const daysInMonth = lastDay.getDate();
     const startingDayOfWeek = firstDay.getDay();
+    const monthPrefix = `${this._calendarYear}-${String(this._calendarMonth + 1).padStart(2, '0')}-`;
 
     // Create calendar grid
     const weeks = [];
@@ -1809,10 +1949,9 @@ class SimpleChoresCard extends LitElement {
       weeks.push(currentWeek);
     }
 
-    // Calculate end date for projections (3 months ahead)
-    const projectionEndDate = new Date(this._calendarYear, this._calendarMonth + 3, 0);
-
-    // Group chores by date (using optimistically updated chores)
+    // Only the visible month is drawn, so projections stop at its last day
+    // and only occurrences inside the month are kept. Real due dates are kept
+    // wherever they fall, since a drag needs its source.
     const choresByDate = {};
     choresWithOptimistic.forEach(chore => {
       const dueDate = chore.next_due || chore.due_date;
@@ -1825,9 +1964,10 @@ class SimpleChoresCard extends LitElement {
       }
 
       // Generate and add future occurrences
-      const futureOccurrences = this._generateFutureOccurrences(chore, projectionEndDate);
+      const futureOccurrences = this._generateFutureOccurrences(chore, lastDay);
       futureOccurrences.forEach(occurrence => {
         const dateKey = occurrence.next_due;
+        if (!dateKey.startsWith(monthPrefix)) return;
         if (!choresByDate[dateKey]) {
           choresByDate[dateKey] = [];
         }
@@ -1835,25 +1975,36 @@ class SimpleChoresCard extends LitElement {
       });
     });
 
-    // Group completed chores by completion date
+    // Group completed chores by completion date, visible month only.
+    // completed_at is written in local time by the backend, so the date part
+    // is the household's own day.
     const completedByDate = {};
-    completionHistory.forEach(entry => {
-      if (entry.completed_at) {
-        const dateKey = entry.completed_at.split('T')[0];
-        if (!completedByDate[dateKey]) {
-          completedByDate[dateKey] = [];
-        }
-        completedByDate[dateKey].push({
-          ...entry,
-          id: entry.chore_id,
-          name: entry.chore_name,
-          isCompleted: true
-        });
+    this._getCompletionHistorySync().forEach(entry => {
+      if (!entry.completed_at || !entry.completed_at.startsWith(monthPrefix)) return;
+      const dateKey = entry.completed_at.split('T')[0];
+      if (!completedByDate[dateKey]) {
+        completedByDate[dateKey] = [];
       }
+      completedByDate[dateKey].push({
+        ...entry,
+        id: entry.chore_id,
+        name: entry.chore_name,
+        isCompleted: true
+      });
     });
 
-    const today = new Date();
-    const todayStr = this._toLocalDateStr(today);
+    return { weeks, daysInMonth, choresByDate, completedByDate };
+  }
+
+  _renderCalendarView() {
+    const { weeks, daysInMonth, choresByDate, completedByDate } = this._getCalendarData();
+
+    // Calendar navigation
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'];
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+    const todayStr = this._toLocalDateStr(new Date());
 
     return html`
       <div class="calendar-view">
@@ -2253,38 +2404,35 @@ class SimpleChoresCard extends LitElement {
   }
 
   /**
-   * Retrieves the list of Home Assistant users.
-   * Uses caching to minimize sensor lookups. Falls back to auth registry if available.
+   * The users the backend knows about (HA users plus custom ones), read from
+   * sensor.total_chores. Cached against that attribute's identity: a new
+   * state object refreshes it, nothing else does.
    * @returns {Array<{id: string, name: string}>} Array of user objects
    */
   _getUsers() {
     if (!this.hass) return [];
 
-    // Check cache first
-    if (this._isCacheValid('users')) {
-      return this._cache.users.data;
+    const source = this.hass.states[SimpleChoresCard.SENSORS.TOTAL]?.attributes?.users ?? null;
+    const cache = this._cache.users;
+    if (cache.data && cache.source === source &&
+        (cache.states === null || cache.states === this.hass.states)) {
+      return cache.data;
     }
 
-    let users = [];
+    let users = Array.isArray(source) ? source : [];
+    let usedFallback = false;
 
-    // Try to get users from sensor attributes
-    const sensor = this.hass.states[SimpleChoresCard.SENSORS.TOTAL];
-    if (sensor && sensor.attributes && sensor.attributes.users) {
-      users = sensor.attributes.users;
-    }
-
-    // Fallback to Home Assistant users from auth registry (if available)
+    // Fall back to person entities until the sensor publishes users
     if (users.length === 0) {
-      // Check if we can get users from HA's person entities
-      Object.keys(this.hass.states).forEach(entityId => {
-        if (entityId.startsWith('person.')) {
-          const person = this.hass.states[entityId];
-          users.push({
-            id: entityId.replace('person.', ''),
-            name: person.attributes.friendly_name || person.attributes.id || entityId.replace('person.', '')
-          });
-        }
-      });
+      usedFallback = true;
+      users = [];
+      for (const [entityId, person] of Object.entries(this.hass.states)) {
+        if (!entityId.startsWith('person.')) continue;
+        users.push({
+          id: entityId.replace('person.', ''),
+          name: person.attributes?.friendly_name || person.attributes?.id || entityId.replace('person.', '')
+        });
+      }
     }
 
     // Final fallback - basic user entries
@@ -2292,93 +2440,43 @@ class SimpleChoresCard extends LitElement {
       users = [{ id: 'user', name: 'Default User' }];
     }
 
-    // Update cache
-    this._updateCache('users', users);
-
+    cache.source = source;
+    // Only a fallback result depends on the full state table
+    cache.states = usedFallback ? this.hass.states : null;
+    cache.data = users;
     return users;
   }
 
   /**
-   * Retrieves the list of rooms (both HA Areas and custom rooms).
-   * Uses caching to minimize sensor lookups.
+   * Rooms (HA areas plus custom rooms) as published on sensor.total_chores,
+   * falling back to the raw area registry until the sensor exists. Cached
+   * against the attribute's identity, so a room added or renamed appears as
+   * soon as the sensor updates, with no TTL to wait out.
    * @returns {Array<{id: string, name: string, icon: string, is_custom: boolean}>} Array of room objects
    */
   _getRooms() {
     if (!this.hass) return [];
 
-    // Check cache first
-    if (this._isCacheValid('rooms')) {
-      return this._cache.rooms.data;
+    const source = this.hass.states[SimpleChoresCard.SENSORS.TOTAL]?.attributes?.rooms ?? null;
+    const areas = this.hass.areas;
+    const cache = this._cache.rooms;
+    if (cache.data && cache.source === source && cache.areas === areas) {
+      return cache.data;
     }
 
-    let rooms = [];
-
-    // Debug: Check what sensors exist (check all possible naming patterns)
-    const simpleChoreSensors = Object.keys(this.hass.states).filter(key =>
-      key.startsWith('sensor.simple_chores')
-    );
-    const householdTaskSensors = Object.keys(this.hass.states).filter(key =>
-      key.startsWith('sensor.household_tasks')
-    );
-    const choresSensors = Object.keys(this.hass.states).filter(key =>
-      key.startsWith('sensor.') && (key.includes('chores') || key.includes('overdue'))
-    );
-
-
-    // Debug: Check if we have ANY entities from this integration
-    const allHouseholdEntities = Object.keys(this.hass.states).filter(key =>
-      key.includes('household_tasks') || key.includes('simple_chores')
-    );
-
-    // Check if calendar has any room data
-    const calendar = this.hass.states["calendar.household_tasks"];
-    if (calendar && calendar.attributes) {
-
-      // Check if calendar has room data in attributes
-      if (calendar.attributes.rooms) {
-        rooms = calendar.attributes.rooms;
-      }
-    }
-
+    let rooms = Array.isArray(source) ? source : [];
     if (rooms.length === 0) {
-      const allSensors = [...simpleChoreSensors, ...householdTaskSensors];
-
-      // Get rooms from total sensor
-      const sensor = this.hass.states[SimpleChoresCard.SENSORS.TOTAL];
-      if (sensor && sensor.attributes && sensor.attributes.rooms) {
-        rooms = sensor.attributes.rooms;
-      }
-
-      // Check each sensor for room data (fallback)
-      if (rooms.length === 0) {
-        for (const sensorName of allSensors) {
-          const sensor = this.hass.states[sensorName];
-          if (sensor && sensor.attributes) {
-            if (sensor.attributes.rooms) {
-              // Found rooms in sensor
-              rooms = sensor.attributes.rooms;
-              break;
-            }
-          }
-        }
-      }
-    }
-
-    // Fallback: Get just Home Assistant areas if sensor data not available
-    if (rooms.length === 0) {
-      // No rooms found in sensors, falling back to HA areas
-
-      rooms = Object.values(this.hass.areas || {}).map(area => ({
+      rooms = Object.values(areas || {}).map(area => ({
         id: `area_${area.area_id}`,  // Match the coordinator's room ID format
         name: area.name || area.area_id
       }));
-
-      // Using HA areas fallback
     }
 
-    // Update cache
-    this._updateCache('rooms', rooms);
-
+    cache.source = source;
+    cache.areas = areas;
+    cache.data = rooms;
+    // Names were resolved against the previous list
+    this._cache.roomLookup.clear();
     return rooms;
   }
 
@@ -2444,14 +2542,6 @@ class SimpleChoresCard extends LitElement {
 
   _roomChanged(e) {
     this._selectedRoom = e.target.value;
-  }
-
-  _toggleMyChoresFilter() {
-    this._showMyChoresOnly = !this._showMyChoresOnly;
-  }
-
-  _toggleView() {
-    this._currentView = this._currentView === 'list' ? 'calendar' : 'list';
   }
 
   /**
@@ -2550,18 +2640,20 @@ class SimpleChoresCard extends LitElement {
    * @returns {Array<Object>}
    */
   _getRawFocusChores() {
-    const source = this._focusGetAhead
-      ? [...this._getDueChores('today'), ...this._getDueChores('week')]
-      : this._getDueChores('today');
+    return this._memo('focusRaw', [this._choresData, this._focusGetAhead], () => {
+      const source = this._focusGetAhead
+        ? [...this._getDueChores('today'), ...this._getDueChores('week')]
+        : this._getDueChores('today');
 
-    const seen = new Set();
-    const unique = [];
-    for (const chore of source) {
-      if (!chore || !chore.id || seen.has(chore.id)) continue;
-      seen.add(chore.id);
-      unique.push(chore);
-    }
-    return unique;
+      const seen = new Set();
+      const unique = [];
+      for (const chore of source) {
+        if (!chore || !chore.id || seen.has(chore.id)) continue;
+        seen.add(chore.id);
+        unique.push(chore);
+      }
+      return unique;
+    });
   }
 
   /**
@@ -2570,9 +2662,13 @@ class SimpleChoresCard extends LitElement {
    * @returns {Array<Object>}
    */
   _getFocusPool() {
-    const byRoom = this._filterChoresByRoom(this._getRawFocusChores());
-    const byUser = this._filterChoresByUser(byRoom);
-    return byUser.filter(chore => !this._focusDismissed[chore.id]);
+    const raw = this._getRawFocusChores();
+    const deps = [raw, this._selectedRoom, this._selectedAssignee, this.hass?.user?.id ?? null, this._focusDismissed];
+    return this._memo('focusPool', deps, () => {
+      const byRoom = this._filterChoresByRoom(raw);
+      const byUser = this._filterChoresByUser(byRoom);
+      return byUser.filter(chore => !this._focusDismissed[chore.id]);
+    });
   }
 
   /**
@@ -2580,17 +2676,20 @@ class SimpleChoresCard extends LitElement {
    * @returns {Array<Object>}
    */
   _getFocusQueue() {
-    const sorted = this._sortFocusChores(this._filterChoresByTimeBudget(this._getFocusPool()));
-    if (!this._focusOrder) {
-      return sorted;
-    }
-    // Preserve a shuffle; anything new since the shuffle keeps its natural
-    // place at the end rather than landing in raw sensor order
-    const rank = new Map(this._focusOrder.map((id, index) => [id, index]));
-    return [...sorted].sort((a, b) => {
-      const ra = rank.has(a.id) ? rank.get(a.id) : Number.MAX_SAFE_INTEGER;
-      const rb = rank.has(b.id) ? rank.get(b.id) : Number.MAX_SAFE_INTEGER;
-      return ra - rb;
+    const pool = this._getFocusPool();
+    return this._memo('focusQueue', [pool, this._timeBudget, this._focusOrder], () => {
+      const sorted = this._sortFocusChores(this._filterChoresByTimeBudget(pool));
+      if (!this._focusOrder) {
+        return sorted;
+      }
+      // Preserve a shuffle; anything new since the shuffle keeps its natural
+      // place at the end rather than landing in raw sensor order
+      const rank = new Map(this._focusOrder.map((id, index) => [id, index]));
+      return [...sorted].sort((a, b) => {
+        const ra = rank.has(a.id) ? rank.get(a.id) : Number.MAX_SAFE_INTEGER;
+        const rb = rank.has(b.id) ? rank.get(b.id) : Number.MAX_SAFE_INTEGER;
+        return ra - rb;
+      });
     });
   }
 
@@ -2642,9 +2741,7 @@ class SimpleChoresCard extends LitElement {
   }
 
   _formatClock(totalSeconds) {
-    const mins = Math.floor(totalSeconds / 60);
-    const secs = totalSeconds % 60;
-    return `${mins}:${String(secs).padStart(2, '0')}`;
+    return formatClock(totalSeconds);
   }
 
   /** Completions recorded today, used for the "x of y done" ring. */
@@ -2920,17 +3017,31 @@ class SimpleChoresCard extends LitElement {
       finished: false,
     };
     this._timerInterval = setInterval(() => this._tickTimer(), 1000);
+    // Showing the ring is a card render; the ticks that follow are not
+    this.requestUpdate();
   }
 
+  /**
+   * One second of countdown. The timer is updated in place and the new
+   * values are handed to the ring element, which re-renders by itself. The
+   * card used to replace _focusTimer here, and as a reactive property that
+   * re-rendered the header, the queue and every modal once a second.
+   */
   _tickTimer() {
-    if (!this._focusTimer) {
+    const timer = this._focusTimer;
+    if (!timer) {
       this._clearTimerInterval();
       return;
     }
-    const remaining = Math.max(0, Math.round((this._focusTimer.endsAt - Date.now()) / 1000));
-    const finished = remaining === 0;
-    this._focusTimer = { ...this._focusTimer, remaining, finished };
-    if (finished) this._clearTimerInterval();
+    timer.remaining = Math.max(0, Math.round((timer.endsAt - Date.now()) / 1000));
+    timer.finished = timer.remaining === 0;
+    if (timer.finished) this._clearTimerInterval();
+
+    const ring = this.renderRoot?.querySelector?.('simple-chores-timer-ring');
+    if (ring) {
+      ring.remaining = timer.remaining;
+      ring.finished = timer.finished;
+    }
   }
 
   /**
@@ -2939,7 +3050,10 @@ class SimpleChoresCard extends LitElement {
   _stopTimer(choreId) {
     if (choreId && this._focusTimer && this._focusTimer.choreId !== choreId) return;
     this._clearTimerInterval();
-    this._focusTimer = null;
+    if (this._focusTimer) {
+      this._focusTimer = null;
+      this.requestUpdate();
+    }
   }
 
   _toggleTimer(chore) {
@@ -3028,10 +3142,9 @@ class SimpleChoresCard extends LitElement {
     const { TIME_BUDGETS } = this.constructor.constants;
     const chipIcons = { 5: 'mdi:flash', 15: 'mdi:clock-outline', 30: 'mdi:arm-flex' };
 
-    const countWithin = (budget) => pool.filter(chore => {
-      const minutes = this._choreMinutes(chore);
-      return minutes !== null && minutes <= budget;
-    }).length;
+    // Estimate each chore once, then count per chip
+    const estimates = pool.map(chore => this._choreMinutes(chore)).filter(minutes => minutes !== null);
+    const countWithin = (budget) => estimates.filter(minutes => minutes <= budget).length;
 
     return html`
       <div class="focus-toolbar">
@@ -3310,27 +3423,12 @@ class SimpleChoresCard extends LitElement {
     const timer = this._focusTimer;
     if (!timer) return '';
 
-    const radius = 26;
-    const circumference = 2 * Math.PI * radius;
-    const fraction = timer.total > 0 ? timer.remaining / timer.total : 0;
-
     return html`
-      <div class="focus-timer ${timer.finished ? 'finished' : ''}">
-        <svg viewBox="0 0 64 64" class="focus-timer-ring" aria-hidden="true">
-          <circle class="ring-track" cx="32" cy="32" r="${radius}"></circle>
-          <circle
-            class="ring-value"
-            cx="32"
-            cy="32"
-            r="${radius}"
-            stroke-dasharray="${circumference}"
-            stroke-dashoffset="${circumference * (1 - fraction)}"
-          ></circle>
-        </svg>
-        <span class="focus-timer-text">
-          ${timer.finished ? "Time's up!" : this._formatClock(timer.remaining)}
-        </span>
-      </div>
+      <simple-chores-timer-ring
+        .total=${timer.total}
+        .remaining=${timer.remaining}
+        .finished=${timer.finished}
+      ></simple-chores-timer-ring>
     `;
   }
 
@@ -3382,33 +3480,6 @@ class SimpleChoresCard extends LitElement {
         `)}
       </div>
     `;
-  }
-
-  _completeChore(choreId) {
-    this.hass.callService("simple_chores", "complete_chore", {
-      chore_id: choreId
-    }).then(() => {
-      this._celebrate(choreId);
-      const chore = this._choresData.byId.get(choreId);
-      this._offerUndo({ id: choreId, name: chore ? chore.name : "Chore" });
-    });
-  }
-
-  _skipChore(choreId) {
-    this.hass.callService("simple_chores", "skip_chore", {
-      chore_id: choreId
-    }).then(() => {
-      this._showToast("Chore skipped to next occurrence");
-    });
-  }
-
-  _showToast(message) {
-    const event = new CustomEvent("hass-notification", {
-      detail: { message },
-      bubbles: true,
-      composed: true,
-    });
-    this.dispatchEvent(event);
   }
 
   /**
@@ -3486,7 +3557,8 @@ class SimpleChoresCard extends LitElement {
       });
 
 
-      // Wait and check if the room data updates
+      // The sensor publishes the new room on the backend's next refresh;
+      // _getRooms() follows that attribute, so poll it until it shows up
       const checkForRoom = (attempts = 0) => {
         this._setTimeout(() => {
           const roomsAfter = this._getRooms();
@@ -3512,9 +3584,6 @@ class SimpleChoresCard extends LitElement {
       };
 
       checkForRoom();
-
-      // Invalidate room cache since we added a new room
-      this._invalidateCache('rooms');
     } catch (error) {
       console.error("Simple Chores Card: Service call failed:", error);
       this._showToast(`Error creating room: ${error.message}`);
@@ -3698,9 +3767,6 @@ class SimpleChoresCard extends LitElement {
         name: this._formData.user.name.trim(),
         avatar: this._formData.user.avatar || "mdi:account"
       };
-
-      console.log("Simple Chores Card: Calling add_user service with data:", serviceData);
-      console.log("Simple Chores Card: Service domain: simple_chores, service: add_user");
 
       await this.hass.callService("simple_chores", "add_user", serviceData);
 
@@ -4681,24 +4747,6 @@ class SimpleChoresCard extends LitElement {
     return this._renderModalShell("edit-chore-title", "Edit Chore", this._closeEditChoreModal, body, { footer });
   }
 
-  async _deleteChore(choreId, choreName) {
-    if (!confirm(`Are you sure you want to delete the chore "${choreName}"? This action cannot be undone.`)) {
-      return;
-    }
-
-    try {
-      await this.hass.callService("simple_chores", "remove_chore", {
-        chore_id: choreId
-      });
-
-      this._showToast(`Chore "${choreName}" deleted successfully!`);
-      this.requestUpdate();
-    } catch (error) {
-      console.error("Simple Chores Card: Failed to delete chore:", error);
-      this._showToast(`Error deleting chore: ${error.message}`);
-    }
-  }
-
   _openAllChoresModal() {
     this._allChoresRoomFilter = "all";
     this._showAllChoresModal = true;
@@ -4884,11 +4932,6 @@ class SimpleChoresCard extends LitElement {
   async _deleteChoreFromModal(choreId, choreName) {
     this._closeAllChoresModal();
     await this._deleteChore(choreId, choreName);
-  }
-
-  async _completeChoreFromModal(choreId) {
-    this._closeAllChoresModal();
-    await this._completeChore(choreId);
   }
 
   async _skipChoreFromModal(choreId) {
@@ -5115,18 +5158,6 @@ class SimpleChoresCard extends LitElement {
       this._showToast(this._parseErrorMessage(error, "updating chore"));
     } finally {
       this._isLoading = false;
-    }
-  }
-
-  async _completeChore(choreId) {
-    try {
-      await this.hass.callService("simple_chores", "complete_chore", {
-        chore_id: choreId
-      });
-      this._showToast("Chore completed!");
-    } catch (error) {
-      console.error("Simple Chores Card: Error completing chore:", error);
-      this._showToast("Error completing chore. Please try again.");
     }
   }
 
@@ -8573,51 +8604,6 @@ class SimpleChoresCard extends LitElement {
         color: var(--secondary-text-color);
       }
 
-      /* --- Timer ring --- */
-      .focus-timer {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-      }
-
-      .focus-timer-ring {
-        width: 64px;
-        height: 64px;
-        flex-shrink: 0;
-        transform: rotate(-90deg);
-      }
-
-      .focus-timer-ring .ring-track,
-      .focus-timer-ring .ring-value {
-        fill: none;
-        stroke-width: 6;
-        stroke-linecap: round;
-      }
-
-      .focus-timer-ring .ring-track {
-        stroke: var(--secondary-background-color);
-      }
-
-      .focus-timer-ring .ring-value {
-        stroke: var(--sc-accent);
-        transition: stroke-dashoffset 1s linear;
-      }
-
-      .focus-timer.finished .ring-value {
-        stroke: var(--sc-danger);
-      }
-
-      .focus-timer-text {
-        font-size: 1.6em;
-        font-weight: 700;
-        font-variant-numeric: tabular-nums;
-        color: var(--primary-text-color);
-      }
-
-      .focus-timer.finished .focus-timer-text {
-        color: var(--sc-danger);
-      }
-
       /* --- Actions --- */
       .focus-deck-actions {
         display: grid;
@@ -8782,7 +8768,6 @@ class SimpleChoresCard extends LitElement {
         }
         .focus-progress-fill,
         .focus-steps-fill,
-        .focus-timer-ring .ring-value,
         .focus-action,
         .focus-icon-btn {
           transition: none;
@@ -9068,85 +9053,32 @@ class SimpleChoresCardEditor extends LitElement {
   }
 }
 
-  // Register the custom elements (with guard to prevent double registration)
-  if (!customElements.get("simple-chores-card")) {
-    customElements.define("simple-chores-card", SimpleChoresCard);
-    console.info("Simple Chores Card: Registered simple-chores-card");
-  } else {
-    console.warn("Simple Chores Card: simple-chores-card already registered, skipping");
+  // Register the custom elements (guarded so a second load is harmless)
+  const elements = [
+    ["simple-chores-timer-ring", SimpleChoresTimerRing],
+    ["simple-chores-card", SimpleChoresCard],
+    ["simple-chores-card-editor", SimpleChoresCardEditor],
+  ];
+  for (const [name, element] of elements) {
+    if (!customElements.get(name)) {
+      customElements.define(name, element);
+    } else {
+      console.warn(`Simple Chores Card: ${name} already registered, skipping`);
+    }
   }
-
-  if (!customElements.get("simple-chores-card-editor")) {
-    customElements.define("simple-chores-card-editor", SimpleChoresCardEditor);
-    console.info("Simple Chores Card: Registered simple-chores-card-editor");
-  } else {
-    console.warn("Simple Chores Card: simple-chores-card-editor already registered, skipping");
-  }
-
-  console.info(`Simple Chores Card v${CARD_VERSION}: Registration complete!`);
 };
 
 // Start initialization
 initCard();
 
-// Wait for customCards to be available and register
-(function() {
-  let registered = false;
-
-  const registerCard = () => {
-    // Prevent duplicate registration
-    if (registered) {
-      console.warn("Simple Chores Card: Already registered for picker, skipping");
-      return;
-    }
-
-    // Register with custom card picker - this makes it show up in the visual picker
-    window.customCards = window.customCards || [];
-
-    // Check if already in the array
-    const alreadyRegistered = window.customCards.some(card => card.type === "simple-chores-card");
-    if (!alreadyRegistered) {
-      window.customCards.push({
-        type: "simple-chores-card",
-        name: "Simple Chores Card",
-        description: "Manage household chores with room organization, a focus view, and completion tracking",
-        preview: true, // This enables preview in card picker
-        documentationURL: "https://github.com/darthmario/simple-chores",
-      });
-    }
-
-    // Also register in the legacy format for broader compatibility
-    if (!window.customCardsRegistry) {
-      window.customCardsRegistry = {};
-    }
-    window.customCardsRegistry["simple-chores-card"] = {
-      type: "simple-chores-card",
-      name: "Simple Chores Card",
-      description: "Manage household chores with room organization, a focus view, and completion tracking",
-      preview: true,
-    };
-
-    // Register in HA card registry for visual picker
-    if (window.customElements && window.customElements.whenDefined) {
-      window.customElements.whenDefined('simple-chores-card').then(() => {
-        const event = new Event('ll-rebuild', { bubbles: true, composed: true });
-        document.dispatchEvent(event);
-      });
-    }
-
-    registered = true;
-    console.info("Simple Chores Card registered for visual picker");
-  };
-
-  // Register immediately and also after DOM is ready
-  registerCard();
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', registerCard);
-  }
-})();
-
-console.info(
-  `%c SIMPLE-CHORES-CARD %c v1.0.0 `,
-  "color: orange; font-weight: bold; background: black",
-  "color: white; font-weight: bold; background: dimgray"
-);
+// Register with the card picker
+window.customCards = window.customCards || [];
+if (!window.customCards.some(card => card.type === "simple-chores-card")) {
+  window.customCards.push({
+    type: "simple-chores-card",
+    name: "Simple Chores Card",
+    description: "Manage household chores with room organization, a focus view, and completion tracking",
+    preview: true, // This enables preview in card picker
+    documentationURL: "https://github.com/darthmario/simple-chores",
+  });
+}

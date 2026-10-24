@@ -1210,6 +1210,150 @@ await check('undoing from history calls the service by history id and re-fetches
   assert.equal(fetched, 1);
 });
 
+// --- Render cost (the wall tablet pays for every re-render) ---------------
+
+/** A hass object identical to the card's except for one patched state. */
+function withState(card, entityId, patch) {
+  const current = card.hass.states[entityId];
+  return {
+    ...card.hass,
+    states: {
+      ...card.hass.states,
+      [entityId]: { ...current, attributes: { ...current.attributes, ...patch } },
+    },
+  };
+}
+
+await check('the card version constant matches manifest.json', () => {
+  const manifest = JSON.parse(readFileSync(
+    path.join(repoRoot, 'custom_components', 'simple_chores', 'manifest.json'), 'utf8'));
+  assert.equal(vm.runInContext('CARD_VERSION', sandbox), manifest.version);
+});
+
+await check('a timer tick does not re-render the card', () => {
+  const card = makeCard();
+  let renders = 0;
+  card.requestUpdate = () => { renders++; };
+  card._startTimer(chore({ id: 'a', estimated_minutes: 5 }));
+  assert.equal(renders, 1, 'starting shows the ring');
+  card._tickTimer();
+  card._tickTimer();
+  assert.equal(renders, 1, 'ticks go to the ring, not through render()');
+  card._stopTimer();
+  assert.equal(renders, 2, 'stopping hides the ring');
+  card._stopTimer();
+  assert.equal(renders, 2, 'stopping an idle timer is a no-op');
+});
+
+await check('ticks reach the ring element directly', () => {
+  const card = makeCard();
+  const ring = {};
+  card.renderRoot = { querySelector: () => ring };
+  card._startTimer(chore({ id: 'a', estimated_minutes: 5 }));
+  card._focusTimer.endsAt = Date.now() + 10000;
+  card._tickTimer();
+  assert.ok(ring.remaining >= 9 && ring.remaining <= 10, `remaining was ${ring.remaining}`);
+  assert.equal(ring.finished, false);
+  card._focusTimer.endsAt = Date.now() - 1;
+  card._tickTimer();
+  assert.equal(ring.remaining, 0);
+  assert.equal(ring.finished, true);
+  card._stopTimer();
+});
+
+await check('the ring element renders the clock and the finished state', () => {
+  const Ring = defined.get('simple-chores-timer-ring');
+  assert.ok(Ring, 'ring element registered');
+  const ring = new Ring();
+  ring.total = 300;
+  ring.remaining = 65;
+  assert.match(renderToText(ring.render()), /1:05/);
+  ring.remaining = 0;
+  ring.finished = true;
+  assert.match(renderToText(ring.render()), /Time's up!/);
+});
+
+await check('the focus card embeds the ring only while its timer runs', () => {
+  const card = makeCard();
+  const c = chore({ id: 'a', estimated_minutes: 5 });
+  card._startTimer(c);
+  assert.match(renderToText(card._renderFocusCard(c, { expanded: true })), /simple-chores-timer-ring/);
+  card._stopTimer();
+  assert.doesNotMatch(renderToText(card._renderFocusCard(c, { expanded: true })), /simple-chores-timer-ring/);
+});
+
+await check('rooms follow the sensor attribute, with no TTL to wait out', () => {
+  const card = makeCard();
+  assert.equal(card._getRooms().length, 1);
+  const rooms = card.hass.states['sensor.total_chores'].attributes.rooms;
+  card.hass = withState(card, 'sensor.total_chores', { rooms: [...rooms, { id: 'custom_1', name: 'Garage' }] });
+  assert.equal(card._getRooms().length, 2, 'a newly published room is visible at once');
+  assert.equal(card._getRoomName('custom_1'), 'Garage', 'the name lookup was reset too');
+});
+
+await check('rooms are not rebuilt by an unrelated hass update', () => {
+  const card = makeCard();
+  const first = card._getRooms();
+  card.hass = { ...card.hass };
+  assert.equal(card._getRooms(), first);
+});
+
+await check('users follow the sensor attribute the same way', () => {
+  const card = makeCard();
+  const first = card._getUsers();
+  assert.equal(card._getUsers(), first);
+  card.hass = withState(card, 'sensor.total_chores', { users: [{ id: 'u1', name: 'Nate' }, { id: 'u2', name: 'Nova' }] });
+  assert.equal(card._getUsers().length, 2);
+});
+
+await check('calendar data is built once per set of inputs', () => {
+  const card = makeCard();
+  const first = card._getCalendarData();
+  assert.equal(card._getCalendarData(), first, 'same inputs, same object');
+  card._calendarMonth = (card._calendarMonth + 1) % 12;
+  const nextMonth = card._getCalendarData();
+  assert.notEqual(nextMonth, first, 'a new month rebuilds');
+  seedChores(card, CHORES, 'rev2');
+  assert.notEqual(card._getCalendarData(), nextMonth, 'a new chore list rebuilds');
+});
+
+await check('calendar projections stay inside the visible month', () => {
+  const card = makeCard(null, [chore({ id: 'a', name: 'Daily', frequency: 'daily' })]);
+  card._calendarMonth = TODAY.getMonth();
+  card._calendarYear = TODAY.getFullYear();
+  const { choresByDate } = card._getCalendarData();
+  assert.ok(choresByDate[iso(TODAY)], 'today carries the real due date');
+  const prefix = iso(TODAY).slice(0, 8);
+  for (const [key, entries] of Object.entries(choresByDate)) {
+    if (entries.some(c => c.isProjected)) {
+      assert.ok(key.startsWith(prefix), `projection on ${key} is outside the month`);
+    }
+  }
+});
+
+await check('the focus queue is reused until an input changes', () => {
+  const card = makeCard();
+  const first = card._getFocusQueue();
+  assert.equal(card._getFocusQueue(), first);
+  card._setTimeBudget(5);
+  const budgeted = card._getFocusQueue();
+  assert.notEqual(budgeted, first, 'a budget change rebuilds');
+  card._dismissFromFocus('a');
+  assert.notEqual(card._getFocusQueue(), budgeted, 'a dismissal rebuilds');
+});
+
+await check('my_chores_default starts on the My Chores filter', () => {
+  const card = new Card();
+  card.setConfig({ type: 'custom:simple-chores-card', my_chores_default: true });
+  assert.equal(card._selectedAssignee, 'mine');
+});
+
+await check('the dead duplicate methods are gone', () => {
+  assert.equal(typeof Card.prototype._completeChore, 'undefined');
+  assert.equal(typeof Card.prototype._toggleView, 'undefined');
+  assert.equal(typeof Card.prototype._toggleMyChoresFilter, 'undefined');
+});
+
 // --- Report ---------------------------------------------------------------
 
 let failed = 0;
