@@ -798,16 +798,53 @@ class TestUndoCompletion:
         assert result["chore_id"] == chore["id"]
         assert store.history == []
 
-    def test_old_entries_without_a_snapshot_are_removed_but_leave_the_chore(self, store):
+    def test_pre_snapshot_entries_are_restored_approximately(self, store):
+        # The house's history predates snapshots: a three-year-old's morning
+        # of false check-offs must still come back to today's list
         chore = _add_basic_chore(store)
         store.complete_chore(chore["id"], "u1", "Nate", next_due=date(2024, 6, 22))
+        store.history[-1]["completed_at"] = "2024-06-10T09:00:00+00:00"
+        del store.history[-1]["previous"]
+        store.complete_chore(chore["id"], "u2", "Nova", next_due=date(2024, 6, 29))
+        store.history[-1]["completed_at"] = "2024-06-15T09:30:00+00:00"
         del store.history[-1]["previous"]
 
         result = store.undo_completion(chore_id=chore["id"])
 
         assert result is chore
-        assert chore["next_due"] == "2024-06-22", "nothing to restore from, so the chore stays"
-        assert store.history == []
+        assert chore["next_due"] == "2024-06-15", "due again on the day it was marked done"
+        assert chore["last_completed"] == "2024-06-10", "the completion before it is the last one"
+        assert chore["last_completed_by"] == "u1"
+        assert chore["is_completed"] is False
+        assert len(store.history) == 1
+
+    def test_pre_snapshot_one_off_comes_back(self, store):
+        chore = _add_basic_chore(store, frequency="once")
+        store.complete_chore(chore["id"], "u1", "Nate", next_due=None)
+        store.history[-1]["completed_at"] = "2024-06-15T09:30:00+00:00"
+        del store.history[-1]["previous"]
+
+        store.undo_completion(chore_id=chore["id"])
+
+        assert chore["is_completed"] is False
+        assert chore["next_due"] == "2024-06-15"
+        assert chore["last_completed"] is None
+
+    def test_undoing_an_older_completion_only_corrects_history(self, store):
+        chore = _add_basic_chore(store)
+        store.complete_chore(chore["id"], "u1", "Nate", next_due=date(2024, 6, 22))
+        store.history[-1]["completed_at"] = "2024-06-15T09:00:00+00:00"
+        older_id = store.history[-1]["id"]
+        store.complete_chore(chore["id"], "u2", "Nova", next_due=date(2024, 6, 29))
+        store.history[-1]["completed_at"] = "2024-06-22T09:00:00+00:00"
+
+        result = store.undo_completion(history_id=older_id)
+
+        assert result is chore
+        assert len(store.history) == 1
+        assert store.history[0]["completed_by"] == "u2"
+        assert chore["next_due"] == "2024-06-29", "the later completion still stands"
+        assert chore["last_completed_by"] == "u2"
 
     def test_snapshot_stays_out_of_the_published_history(self, store):
         chore = _add_basic_chore(store)

@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import logging
 import uuid
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.helpers.storage import Store
@@ -681,8 +681,14 @@ class SimpleChoresStore:
         ``chore_id``. The chore's due date, last-completed fields, checklist
         progress and one-off flag are restored from the snapshot the entry
         carries, so statistics, streaks and anything derived from history (a
-        certain otter's meals) stay honest. Entries written before snapshots
-        existed are still removed; the chore is then left as it is.
+        certain otter's meals) stay honest.
+
+        Only a chore's newest completion is unwound into the chore itself;
+        undoing an older one just corrects the history, since later
+        completions have moved the chore on since. Entries written before
+        snapshots existed are restored approximately: the day the chore was
+        marked done becomes its due date again, and the previous completion
+        (if any) becomes its last one.
 
         Returns the chore, or the removed entry if its chore no longer exists,
         or None if nothing matched.
@@ -705,10 +711,25 @@ class SimpleChoresStore:
             return None
 
         entry = history.pop(index)
-        chore = self._data["chores"].get(entry.get("chore_id"))
+        entry_chore_id = entry.get("chore_id")
+        chore = self._data["chores"].get(entry_chore_id)
         if chore is None:
             _LOGGER.info("Removed completion %s of a chore that no longer exists", entry.get("id"))
             return entry
+
+        completed_at = self._entry_time(entry)
+        siblings = [h for h in history if h.get("chore_id") == entry_chore_id]
+        later = [
+            h
+            for h in siblings
+            if (t := self._entry_time(h)) is not None and completed_at is not None and t > completed_at
+        ]
+        if later:
+            _LOGGER.info(
+                "Removed an older completion of '%s' from history; a later one keeps the chore where it is",
+                chore["name"],
+            )
+            return chore
 
         previous = entry.get("previous")
         if isinstance(previous, dict):
@@ -718,12 +739,36 @@ class SimpleChoresStore:
             chore["step_progress"] = list(previous.get("step_progress") or [])
             chore["is_completed"] = bool(previous.get("is_completed", False))
             _LOGGER.info("Undid completion of '%s'; due %s again", chore["name"], chore["next_due"])
-        else:
-            _LOGGER.info(
-                "Removed completion of '%s' from history; it predates undo snapshots so the chore is unchanged",
-                chore["name"],
-            )
+            return chore
+
+        # No snapshot (the entry predates them): the best reconstruction is
+        # that the chore was due the day it was marked done, and that the
+        # completion before this one, if any, is its last
+        due_day = dt_util.as_local(completed_at).date() if completed_at is not None else dt_util.now().date()
+        prior = max(siblings, key=lambda h: self._entry_time(h) or datetime.min.replace(tzinfo=UTC), default=None)
+        prior_time = self._entry_time(prior) if prior else None
+        chore["next_due"] = due_day.isoformat()
+        chore["last_completed"] = dt_util.as_local(prior_time).date().isoformat() if prior_time else None
+        chore["last_completed_by"] = prior.get("completed_by") if prior else None
+        chore["is_completed"] = False
+        _LOGGER.info(
+            "Undid a pre-snapshot completion of '%s'; due %s again (approximate)",
+            chore["name"],
+            chore["next_due"],
+        )
         return chore
+
+    @staticmethod
+    def _entry_time(entry: dict[str, Any] | None) -> datetime | None:
+        """The aware completion time of a history entry, or None if unusable."""
+        if not entry:
+            return None
+        parsed = dt_util.parse_datetime(str(entry.get("completed_at") or ""))
+        if parsed is None:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed
 
     def skip_chore(self, chore_id: str, next_due: date) -> dict[str, Any] | None:
         """Skip a chore to the next occurrence without marking complete."""

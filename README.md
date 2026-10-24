@@ -327,7 +327,10 @@ Reverse a completion marked by mistake. The history entry is removed and the cho
 back to where it was: due date, checklist progress and one-off flag are restored from a
 snapshot saved at completion time, so statistics, streaks and anything derived from
 history stay honest. Pass a `history_id` (from the history websocket) or a `chore_id`, in
-which case the newest completion of that chore is undone.
+which case the newest completion of that chore is undone. Only a chore's newest completion
+is unwound into the chore itself; undoing an older one just corrects the history. Entries
+recorded before snapshots existed are restored approximately: the day the chore was marked
+done becomes its due date again.
 
 ```yaml
 service: simple_chores.undo_completion
