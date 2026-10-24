@@ -277,6 +277,18 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self._async_refresh_now()
         return result
 
+    async def async_undo_completion(
+        self,
+        history_id: str | None = None,
+        chore_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Reverse a completion and put the chore back where it was."""
+        result = self.store.undo_completion(history_id=history_id, chore_id=chore_id)
+        if result:
+            await self.store.async_save()
+            await self._async_refresh_now()
+        return result
+
     async def async_skip_chore(self, chore_id: str) -> dict[str, Any] | None:
         """Skip a chore to the next occurrence."""
         if chore_id not in self.store.chores:

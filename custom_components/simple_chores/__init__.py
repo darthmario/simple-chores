@@ -28,6 +28,7 @@ from .const import (
     ATTR_COMPLETED,
     ATTR_ESTIMATED_MINUTES,
     ATTR_FREQUENCY,
+    ATTR_HISTORY_ID,
     ATTR_ICON,
     ATTR_INTERVAL,
     ATTR_NEXT_DUE,
@@ -56,6 +57,7 @@ from .const import (
     SERVICE_SKIP_CHORE,
     SERVICE_SNOOZE_CHORE,
     SERVICE_TOGGLE_CHORE_STEP,
+    SERVICE_UNDO_COMPLETION,
     SERVICE_UPDATE_CHORE,
     SERVICE_UPDATE_ROOM,
     SERVICE_UPDATE_USER,
@@ -93,6 +95,7 @@ ALL_SERVICES: tuple[str, ...] = (
     SERVICE_SKIP_CHORE,
     SERVICE_SNOOZE_CHORE,
     SERVICE_TOGGLE_CHORE_STEP,
+    SERVICE_UNDO_COMPLETION,
     SERVICE_GET_HISTORY,
     SERVICE_GET_USER_STATS,
     SERVICE_SEND_NOTIFICATION,
@@ -219,6 +222,16 @@ SERVICE_SNOOZE_CHORE_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_CHORE_ID): cv.string,
     }
+)
+
+SERVICE_UNDO_COMPLETION_SCHEMA = vol.All(
+    vol.Schema(
+        {
+            vol.Optional(ATTR_HISTORY_ID): cv.string,
+            vol.Optional(ATTR_CHORE_ID): cv.string,
+        }
+    ),
+    cv.has_at_least_one_key(ATTR_HISTORY_ID, ATTR_CHORE_ID),
 )
 
 SERVICE_GET_HISTORY_SCHEMA = vol.Schema(
@@ -450,6 +463,12 @@ class ServiceHandlerFactory:
                     completed = call.data.get(ATTR_COMPLETED)
                     await self.coordinator.async_toggle_chore_step(chore_id, step_index, completed)
                     _LOGGER.debug("Toggled step %s on chore: %s", step_index, chore_id)
+                elif operation == "undo":
+                    history_id = call.data.get(ATTR_HISTORY_ID)
+                    result = await self.coordinator.async_undo_completion(history_id=history_id, chore_id=chore_id)
+                    if result is None:
+                        raise HomeAssistantError("No completion found to undo")
+                    _LOGGER.info("Undid completion (history_id=%s, chore_id=%s)", history_id, chore_id)
             except ValueError as e:
                 _LOGGER.error("Validation error in %s_chore: %s", operation, e)
                 raise HomeAssistantError(f"Invalid input: {e}") from e
@@ -522,6 +541,7 @@ async def _async_setup_services(hass: HomeAssistant, coordinator: SimpleChoresCo
         (SERVICE_UPDATE_CHORE, factory.create_chore_handler("update"), SERVICE_UPDATE_CHORE_SCHEMA),
         (SERVICE_COMPLETE_CHORE, factory.create_chore_handler("complete"), SERVICE_COMPLETE_CHORE_SCHEMA),
         (SERVICE_SKIP_CHORE, factory.create_chore_handler("skip"), SERVICE_SKIP_CHORE_SCHEMA),
+        (SERVICE_UNDO_COMPLETION, factory.create_chore_handler("undo"), SERVICE_UNDO_COMPLETION_SCHEMA),
         (SERVICE_SNOOZE_CHORE, factory.create_chore_handler("snooze"), SERVICE_SNOOZE_CHORE_SCHEMA),
         (
             SERVICE_TOGGLE_CHORE_STEP,

@@ -155,6 +155,10 @@ class SimpleChoresCard extends LitElement {
       // How long the confetti burst stays on screen
       CELEBRATION_MS: 1800,
       CELEBRATION_PARTICLES: 16,
+      // How long the Undo button stays up after a completion
+      UNDO_TOAST_MS: 10000,
+      // How far back the history modal offers Undo
+      UNDO_WINDOW_MS: 24 * 60 * 60 * 1000,
 
       // Statistics dashboard time periods
       STATS_DEFAULT_PERIOD: '4w',
@@ -2734,17 +2738,70 @@ class SimpleChoresCard extends LitElement {
     try {
       await this.hass.callService("simple_chores", service, { chore_id: chore.id, ...data });
       if (successMessage) this._showToast(successMessage);
+      return true;
     } catch (error) {
       console.error(`Simple Chores Card: Error calling ${service}:`, error);
       this._restoreToFocus(chore.id);
       this._showToast("That didn't save. Please try again.");
+      return false;
     }
   }
 
-  _focusComplete(chore) {
+  async _focusComplete(chore) {
     this._celebrate(chore.id);
     const userId = this.hass?.user?.id;
-    return this._focusAction(chore, "complete_chore", userId ? { user_id: userId } : {}, null);
+    const ok = await this._focusAction(chore, "complete_chore", userId ? { user_id: userId } : {}, null);
+    if (ok) this._offerUndo(chore);
+    return ok;
+  }
+
+  // --- Undo ----------------------------------------------------------------
+
+  /**
+   * A toast with an Undo button, shown after every completion. Undoing calls
+   * the backend, which drops the history entry and puts the chore back where
+   * it was (due date, checklist, one-off flag), so nothing derived from
+   * history is left counting a tap that shouldn't have happened.
+   */
+  _offerUndo(chore) {
+    this._showToast(`"${chore.name}" done`, {
+      action: { text: "Undo", onAction: () => this._undoCompletion(chore) },
+    });
+  }
+
+  async _undoCompletion(chore) {
+    try {
+      await this.hass.callService("simple_chores", "undo_completion", { chore_id: chore.id });
+      this._celebration = null;
+      this._restoreToFocus(chore.id);
+      this._showToast(`"${chore.name}" is back on the list`);
+    } catch (error) {
+      console.error("Simple Chores Card: Error undoing completion:", error);
+      this._showToast("Couldn't undo that. Please try again.");
+    }
+  }
+
+  /**
+   * Undo one specific completion from the history modal, then re-fetch so
+   * the list reflects it.
+   */
+  async _undoHistoryEntry(entry) {
+    try {
+      await this.hass.callService("simple_chores", "undo_completion", { history_id: entry.id });
+      this._showToast(`"${entry.chore_name}" is back on the list`);
+      await this._fetchHistory(true);
+    } catch (error) {
+      console.error("Simple Chores Card: Error undoing completion:", error);
+      this._showToast("Couldn't undo that. Please try again.");
+    }
+  }
+
+  /** Whether the history modal should offer Undo for an entry. */
+  _canUndoEntry(entry, now = Date.now()) {
+    if (!entry || !entry.id || !entry.completed_at) return false;
+    const completedAt = new Date(entry.completed_at).getTime();
+    if (Number.isNaN(completedAt)) return false;
+    return now - completedAt <= this.constructor.constants.UNDO_WINDOW_MS;
   }
 
   _focusSnooze(chore) {
@@ -3332,7 +3389,8 @@ class SimpleChoresCard extends LitElement {
       chore_id: choreId
     }).then(() => {
       this._celebrate(choreId);
-      this._showToast("Chore completed!");
+      const chore = this._choresData.byId.get(choreId);
+      this._offerUndo({ id: choreId, name: chore ? chore.name : "Chore" });
     });
   }
 
@@ -5097,6 +5155,7 @@ class SimpleChoresCard extends LitElement {
       await this.hass.callService("simple_chores", "complete_chore", serviceData);
       this._forgetStepsExpanded(completionData.choreId);
       this._celebrate(completionData.choreId);
+      this._offerUndo({ id: completionData.choreId, name: completionData.choreName });
 
       // If the assignment selection changed, update the chore assignment.
       // An empty string explicitly clears the assignment on the backend.
@@ -5109,7 +5168,6 @@ class SimpleChoresCard extends LitElement {
         await this.hass.callService("simple_chores", "update_chore", reassignData);
       }
 
-      this._showToast(`Chore "${completionData.choreName}" completed!`);
       this._closeCompleteChoreModal();
     } catch (error) {
       console.error("Simple Chores Card: Error completing chore:", error);
@@ -5294,6 +5352,16 @@ class SimpleChoresCard extends LitElement {
                       <div class="completion-details">
                         <span class="completion-date">${formattedDate}</span>
                         <span class="completion-time">${formattedTime}</span>
+                        ${this._canUndoEntry(entry) ? html`
+                          <button
+                            class="history-undo-btn"
+                            title="Undo this completion and put the chore back"
+                            @click=${() => this._undoHistoryEntry(entry)}
+                          >
+                            <ha-icon icon="mdi:undo-variant"></ha-icon>
+                            Undo
+                          </button>
+                        ` : ''}
                       </div>
                     </div>
                   `;
@@ -5480,32 +5548,65 @@ class SimpleChoresCard extends LitElement {
     return message;
   }
 
-  _showToast(message) {
-    // Simple toast notification
+  /**
+   * Simple toast notification. Pass `action` ({ text, onAction }) for a
+   * button inside the toast, like Undo after a completion; such toasts stay
+   * up longer so there is time to react.
+   */
+  _showToast(message, { action = null, duration = null } = {}) {
     const toast = document.createElement('div');
-    toast.textContent = message;
+    toast.className = 'simple-chores-toast';
     toast.style.cssText = `
       position: fixed;
       bottom: 20px;
       left: 50%;
       transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 16px;
       background: var(--primary-color);
-      color: white;
+      color: var(--text-primary-color, white);
       padding: 12px 24px;
-      border-radius: 6px;
+      border-radius: 999px;
       z-index: 10000;
       font-size: 14px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     `;
+    const text = document.createElement('span');
+    text.textContent = message;
+    toast.appendChild(text);
+
+    const remove = () => {
+      if (toast.parentNode) {
+        toast.parentNode.removeChild(toast);
+      }
+    };
+
+    if (action && typeof action.onAction === 'function') {
+      const button = document.createElement('button');
+      button.textContent = action.text || 'Undo';
+      button.style.cssText = `
+        border: none;
+        border-radius: 999px;
+        padding: 6px 14px;
+        background: rgba(255, 255, 255, 0.22);
+        color: inherit;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      `;
+      button.addEventListener('click', () => {
+        remove();
+        action.onAction();
+      });
+      toast.appendChild(button);
+    }
+
     document.body.appendChild(toast);
     // Intentionally NOT tracked in _pendingTimeouts: the toast element lives
     // on document.body and outlives this card, so its removal timer must
     // still fire even if the card is disconnected.
-    setTimeout(() => {
-      if (toast.parentNode) {
-        toast.parentNode.removeChild(toast);
-      }
-    }, 3000);
+    setTimeout(remove, duration || (action ? this.constructor.constants.UNDO_TOAST_MS : 3000));
   }
 
   static get styles() {
@@ -7345,6 +7446,30 @@ class SimpleChoresCard extends LitElement {
       
       .history-item:last-child {
         border-bottom: none;
+      }
+
+      .history-undo-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin-left: 8px;
+        padding: 3px 10px;
+        border: 1px solid var(--sc-line);
+        border-radius: 999px;
+        background: transparent;
+        color: var(--sc-ink-soft);
+        font-size: 0.85em;
+        font-family: inherit;
+        cursor: pointer;
+      }
+
+      .history-undo-btn:hover {
+        border-color: var(--sc-accent);
+        color: var(--sc-accent-dark);
+      }
+
+      .history-undo-btn ha-icon {
+        --mdc-icon-size: 16px;
       }
       
       .history-info {
