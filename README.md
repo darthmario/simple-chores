@@ -382,20 +382,26 @@ data:
 
 ### Data Services
 
+Both data services return their result as a service response, so use
+`response_variable` in automations and scripts (Developer Tools shows the
+response directly).
+
 #### `simple_chores.get_history`
-Get completion history for a specific chore.
+Get completion history for a specific chore. Returns `{"history": [...]}`.
 
 ```yaml
 service: simple_chores.get_history
 data:
   chore_id: "abc123"
+response_variable: chore_history
 ```
 
 #### `simple_chores.get_user_stats`
-Get completion statistics for all users.
+Get completion statistics for all users. Returns `{"stats": {...}}`.
 
 ```yaml
 service: simple_chores.get_user_stats
+response_variable: user_stats
 ```
 
 #### `simple_chores.send_due_notification`

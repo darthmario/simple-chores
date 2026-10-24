@@ -1,6 +1,0 @@
-{
-  "name": "Simple Chores",
-  "embed_iframe": false,
-  "require_admin": false,
-  "js_url": "/local/community/simple-chores/simple-chores-card.js"
-}

@@ -9,7 +9,7 @@ from typing import Any
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 
@@ -100,6 +100,9 @@ ALL_SERVICES: tuple[str, ...] = (
     SERVICE_GET_USER_STATS,
     SERVICE_SEND_NOTIFICATION,
 )
+
+# Services whose handlers return data to the caller
+RESPONSE_SERVICES: frozenset[str] = frozenset({SERVICE_GET_HISTORY, SERVICE_GET_USER_STATS})
 
 # Reused by add_chore and update_chore
 _ESTIMATED_MINUTES_VALIDATOR = vol.All(vol.Coerce(int), vol.Range(min=0, max=MAX_ESTIMATED_MINUTES))
@@ -254,6 +257,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Create coordinator
         coordinator = SimpleChoresCoordinator(hass, store, entry)
         await coordinator.async_config_entry_first_refresh()
+        # Area renames and the midnight rollover; removed on unload
+        coordinator.async_setup_listeners()
 
         hass.data[DOMAIN][entry.entry_id] = coordinator
 
@@ -327,13 +332,13 @@ class ServiceHandlerFactory:
 
                 if operation == "add":
                     await self.coordinator.async_add_room(name, icon)
-                    _LOGGER.info("Successfully added room: %s", name)
+                    _LOGGER.debug("Successfully added room: %s", name)
                 elif operation == "remove":
                     await self.coordinator.async_remove_room(room_id)
-                    _LOGGER.info("Successfully removed room: %s", room_id)
+                    _LOGGER.debug("Successfully removed room: %s", room_id)
                 elif operation == "update":
                     await self.coordinator.async_update_room(room_id, name, icon)
-                    _LOGGER.info("Successfully updated room: %s", room_id)
+                    _LOGGER.debug("Successfully updated room: %s", room_id)
             except ValueError as e:
                 _LOGGER.error("Validation error in %s_room: %s", operation, e)
                 raise HomeAssistantError(f"Invalid input: {e}") from e
@@ -368,7 +373,7 @@ class ServiceHandlerFactory:
                     _LOGGER.debug("Successfully removed custom user: %s", user_id)
                 elif operation == "update":
                     await self.coordinator.async_update_user(user_id, name, avatar)
-                    _LOGGER.info("Successfully updated custom user: %s", user_id)
+                    _LOGGER.debug("Successfully updated custom user: %s", user_id)
             except ValueError as e:
                 _LOGGER.error("Validation error in %s_user: %s", operation, e)
                 raise HomeAssistantError(f"Invalid input: {e}") from e
@@ -423,10 +428,10 @@ class ServiceHandlerFactory:
                         estimated_minutes,
                         steps,
                     )
-                    _LOGGER.info("Successfully added chore: %s", name)
+                    _LOGGER.debug("Successfully added chore: %s", name)
                 elif operation == "remove":
                     await self.coordinator.async_remove_chore(chore_id)
-                    _LOGGER.info("Successfully removed chore: %s", chore_id)
+                    _LOGGER.debug("Successfully removed chore: %s", chore_id)
                 elif operation == "update":
                     await self.coordinator.async_update_chore(
                         chore_id,
@@ -445,19 +450,19 @@ class ServiceHandlerFactory:
                         estimated_minutes,
                         steps,
                     )
-                    _LOGGER.info("Successfully updated chore: %s", chore_id)
+                    _LOGGER.debug("Successfully updated chore: %s", chore_id)
                 elif operation == "complete":
                     user_id = call.data.get(ATTR_USER_ID)
                     if user_id is None and call.context.user_id:
                         user_id = call.context.user_id
                     await self.coordinator.async_complete_chore(chore_id, user_id)
-                    _LOGGER.info("Successfully completed chore: %s by user: %s", chore_id, user_id)
+                    _LOGGER.debug("Successfully completed chore: %s by user: %s", chore_id, user_id)
                 elif operation == "skip":
                     await self.coordinator.async_skip_chore(chore_id)
-                    _LOGGER.info("Successfully skipped chore: %s", chore_id)
+                    _LOGGER.debug("Successfully skipped chore: %s", chore_id)
                 elif operation == "snooze":
                     await self.coordinator.async_snooze_chore(chore_id)
-                    _LOGGER.info("Successfully snoozed chore: %s", chore_id)
+                    _LOGGER.debug("Successfully snoozed chore: %s", chore_id)
                 elif operation == "toggle_step":
                     step_index = call.data[ATTR_STEP_INDEX]
                     completed = call.data.get(ATTR_COMPLETED)
@@ -468,7 +473,7 @@ class ServiceHandlerFactory:
                     result = await self.coordinator.async_undo_completion(history_id=history_id, chore_id=chore_id)
                     if result is None:
                         raise HomeAssistantError("No completion found to undo")
-                    _LOGGER.info("Undid completion (history_id=%s, chore_id=%s)", history_id, chore_id)
+                    _LOGGER.debug("Undid completion (history_id=%s, chore_id=%s)", history_id, chore_id)
             except ValueError as e:
                 _LOGGER.error("Validation error in %s_chore: %s", operation, e)
                 raise HomeAssistantError(f"Invalid input: {e}") from e
@@ -512,7 +517,7 @@ class ServiceHandlerFactory:
         async def handler(call: ServiceCall) -> None:
             try:
                 await async_send_due_notification(self.hass, self.coordinator)
-                _LOGGER.info("Successfully sent notification")
+                _LOGGER.debug("Successfully sent notification")
             except Exception as e:
                 _LOGGER.exception("Error sending notification")
                 raise HomeAssistantError(f"Failed to send notification: {e}") from e
@@ -555,6 +560,14 @@ async def _async_setup_services(hass: HomeAssistant, coordinator: SimpleChoresCo
         (SERVICE_SEND_NOTIFICATION, factory.create_notification_handler(), None),
     ]
 
-    # Register all services using the factory pattern
+    # Register all services using the factory pattern. The data services
+    # return a dict, which HA discards unless the service is registered as
+    # returning a response; without it, automations and Developer Tools saw
+    # nothing.
     for service_name, handler, schema in service_configs:
-        hass.services.async_register(DOMAIN, service_name, handler, schema=schema)
+        if service_name in RESPONSE_SERVICES:
+            hass.services.async_register(
+                DOMAIN, service_name, handler, schema=schema, supports_response=SupportsResponse.ONLY
+            )
+        else:
+            hass.services.async_register(DOMAIN, service_name, handler, schema=schema)
